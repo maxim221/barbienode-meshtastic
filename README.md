@@ -75,10 +75,10 @@ DEVICE_URL=http://192.168.1.31 BIND_HOST=127.0.0.1 PORT=8082 \
 `608ff51c867da2004178f8c281397ffbc5079f6e`.
 
 ```bash
-git clone https://github.com/meshtastic/firmware.git
-cd firmware
-git checkout 608ff51c867da2004178f8c281397ffbc5079f6e
-python3 ../barbienode-meshtastic/firmware/apply-dualboot.py "$PWD"
+git clone --recursive https://github.com/meshtastic/firmware.git meshtastic-firmware
+git -C meshtastic-firmware checkout 608ff51c867da2004178f8c281397ffbc5079f6e
+python3 ./firmware/apply-dualboot.py "$(pwd)/meshtastic-firmware"
+cd meshtastic-firmware
 pio run -e e22-s3-n16r8
 ```
 
@@ -104,4 +104,3 @@ firmware commit `608ff51c867da2004178f8c281397ffbc5079f6e`.
 Код распространяется по GNU GPL v3. Meshtastic и его товарные знаки принадлежат
 соответствующим правообладателям; этот репозиторий не является официальным
 проектом Meshtastic.
-

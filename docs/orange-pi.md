@@ -26,11 +26,11 @@ BIND_HOST=192.168.1.19
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now barbienode-web nightbot-archive
-curl http://127.0.0.1:8082/
-curl http://127.0.0.1:8081/healthz
+curl http://192.168.1.19:8082/
+curl http://192.168.1.19:8081/healthz
 ```
 
+В командах проверки также замените `192.168.1.19` на свой адрес Orange Pi.
 Открывайте `http://<адрес-orange-pi>:8082`. Архив доступен на порту `8081`.
 Не публикуйте эти порты в Интернет; для удалённого доступа используйте VPN с
 ограниченными маршрутами и firewall.
-
