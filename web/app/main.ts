@@ -48,6 +48,14 @@ const nodeName = (n:number|string) => {
   const info = nodes.get(num);
   return info?.user?.longName || info?.user?.shortName || `Meshtastic ${short(hex(num))}`;
 };
+function renderOwnIdentity(){
+  const num=(myNode||ownNodeNum)>>>0,user=(num?nodes.get(num)?.user:undefined)||ownerConfig;
+  const name=String(user?.longName||"");
+  $("own-long-name").textContent=name||"Подключение…";
+  $("own-short-name").textContent=`короткое имя: ${user?.shortName||"—"}`;
+  $("own-node-id").textContent=num?hex(num):"—";
+  if(name){document.title=`${name} · Meshtastic`;const header=document.querySelector<HTMLElement>("header strong");if(header)header.textContent=name}
+}
 const fmtTime = (ts:number) => new Date(ts * 1000).toLocaleString("ru-RU", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
 const json = (v:unknown) => JSON.stringify(v, (_k,x) => typeof x === "bigint" ? x.toString() : x, 2);
 const routingErrors:Record<number,string>={1:"Маршрут к ноде неизвестен",2:"Получен отказ от промежуточной ноды",3:"Истекло время ожидания",4:"Нет подходящего радио-интерфейса",5:"Исчерпаны повторные передачи",6:"Канал недоступен",7:"Пакет слишком большой",8:"Нода получила запрос, но её сервис не ответил",9:"Превышен допустимый эфирный цикл",32:"Удалённая нода отклонила запрос",33:"Удалённая нода не разрешила запрос",34:"Не удалось использовать PKI",35:"У принимающей ноды нет публичного ключа отправителя",36:"Сессия администрирования недействительна",37:"Публичный ключ не разрешён для администрирования",38:"Превышен лимит частоты пакетов",39:"Нет публичного ключа ноды-получателя"};
@@ -146,7 +154,7 @@ const isOwnNode=(num:number)=>num===myNode||num===ownNodeNum;
 function nodeCoordinates(n:AnyRecord){const p=n.position;if(p){const lat=Number(p.latitudeI||0)/1e7,lon=Number(p.longitudeI||0)/1e7;if(Number.isFinite(lat)&&Number.isFinite(lon)&&(lat||lon))return {lat,lon,source:"mesh"}}if(isOwnNode(n.num)&&ownFixedPosition)return {...ownFixedPosition,source:"local-fixed"};}
 function scheduleMap(){if(mapRenderPending)return;mapRenderPending=true;requestAnimationFrame(()=>{mapRenderPending=false;renderMap()})}
 
-async function loadOwnLocation(){try{const p=await fetchJson("/node-location.json"),lat=Number(p.latitude),lon=Number(p.longitude),nodeId=Number(p.nodeId)>>>0;if(Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lon)&&lon>=-180&&lon<=180&&nodeId){ownFixedPosition={lat,lon};ownNodeNum=nodeId;addNode(ownNodeNum,{user:{longName:"BarbieNode"}});renderMessages();renderNodes();scheduleMap()}}catch{}}
+async function loadOwnLocation(){try{const p=await fetchJson("/node-location.json"),lat=Number(p.latitude),lon=Number(p.longitude),nodeId=Number(p.nodeId)>>>0;if(Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lon)&&lon>=-180&&lon<=180&&nodeId){ownFixedPosition={lat,lon};ownNodeNum=nodeId;addNode(ownNodeNum,{user:{longName:"BarbieNode"}});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()}}catch{}}
 
 function renderMap(){
   const stage=$("map-stage");if(!stage)return;
@@ -473,8 +481,8 @@ async function connect(){
     const transport=await TransportHTTP.create(location.host,location.protocol==="https:");
     device=new MeshDevice(transport,Math.floor(Math.random()*0xffffffff));
     device.events.onDeviceStatus.subscribe(s=>statusPill(s===DeviceStatusEnum.DeviceConfigured?"плата подключена":"подключение…",s===DeviceStatusEnum.DeviceConfigured?"ok":"warn"));
-    device.events.onMyNodeInfo.subscribe(info=>{statusPill("плата подключена","ok");myNode=info.myNodeNum>>>0;addNode(myNode,{user:{longName:"BarbieNode"}});renderMessages();renderNodes();scheduleMap()});
-    device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(selectedNode===num)updateDestination();if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);refreshSettingsOptions()}renderNodes();scheduleMap()}});
+    device.events.onMyNodeInfo.subscribe(info=>{statusPill("плата подключена","ok");myNode=info.myNodeNum>>>0;addNode(myNode,{user:{longName:"BarbieNode"}});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()});
+    device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(selectedNode===num)updateDestination();if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);renderOwnIdentity();refreshSettingsOptions()}renderNodes();scheduleMap()}});
     device.events.onChannelPacket.subscribe(info=>{const c=info as AnyRecord;channels.set(Number(c.index),c);renderChannels();refreshSettingsOptions()});
     device.events.onConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){radioConfigs.set(key,value);defaultRadioConfigs.delete(key);refreshSettingsOptions()}});
     device.events.onModuleConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){moduleConfigs.set(key,value);defaultModuleConfigs.delete(key);refreshSettingsOptions()}});
@@ -485,7 +493,7 @@ async function connect(){
     device.events.onTraceRoutePacket.subscribe(packet=>{const p=packet as AnyRecord;if(selectedNode===p.from){const route=(p.data?.route||[]).map((n:number,i:number)=>`${i+1}. ${nodeName(n)} (${short(hex(n))})`).join("\n");setAction(`Трассировка получена:\n${route||"Прямое соединение без промежуточных нод"}\n\nПолные данные:\n${json(p.data)}`)}});
     await device.configure();
     myNode=device.meshClient.myNodeNum>>>0;
-    if(myNode){addNode(myNode,{user:{longName:nodes.get(myNode)?.user?.longName||"BarbieNode"}});const owner=nodes.get(myNode)?.user;if(owner){ownerConfig=owner;device.meshClient.config.editor.setBaselineOwner(owner)}renderMessages();renderNodes();scheduleMap();refreshSettingsOptions()}
+    if(myNode){addNode(myNode,{user:{longName:nodes.get(myNode)?.user?.longName||"BarbieNode"}});const owner=nodes.get(myNode)?.user;if(owner){ownerConfig=owner;device.meshClient.config.editor.setBaselineOwner(owner)}renderOwnIdentity();renderMessages();renderNodes();scheduleMap();refreshSettingsOptions()}
     hydrateSettingsFromEditor();
     statusPill("плата подключена","ok");
   }catch(e){statusPill("нет API платы","bad");$("send-result").textContent=`Подключение: ${errorText(e)}`}
