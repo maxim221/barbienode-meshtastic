@@ -1,0 +1,29 @@
+diff --git a/packages/sdk/src/core/client/MeshClient.ts b/packages/sdk/src/core/client/MeshClient.ts
+index fb687a86..ef411d91 100644
+--- a/packages/sdk/src/core/client/MeshClient.ts
++++ b/packages/sdk/src/core/client/MeshClient.ts
+@@ -308,18 +308,24 @@ export class MeshClient {
+     return await this.sendRaw(
+       toBinary(Protobuf.Mesh.ToRadioSchema, toRadioMessage),
+       meshPacket.id,
++      wantAck,
+     );
+   }
+ 
+   public async sendRaw(
+     toRadio: Uint8Array,
+     id: number = generatePacketId(),
++    waitForAck = true,
+   ): Promise<number> {
+     if (toRadio.length > 512) {
+       throw new PacketTooLargeError(toRadio.length);
+     }
+     this.queue.push({ id, data: toRadio });
+     await this.queue.processQueue(this.transport.toDevice);
++    if (!waitForAck) {
++      this.queue.remove(id);
++      return id;
++    }
+     return this.queue.wait(id);
+   }
+ 

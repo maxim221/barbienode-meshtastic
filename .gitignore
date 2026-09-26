@@ -1,0 +1,14 @@
+dist/
+build/
+.pio/
+__pycache__/
+*.py[cod]
+*.sqlite3*
+*.bin
+*.elf
+*.map
+*.yaml
+*.yml
+.env
+node-location.local.json
+

@@ -1,0 +1,8 @@
+{
+  "name": "meshtastic-esp-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "docker build --output type=local,dest=dist ."
+  }
+}

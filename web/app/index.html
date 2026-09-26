@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0b1220" />
+    <title>BarbieNode · Meshtastic</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <header>
+      <div><strong>BarbieNode</strong><small>локальный Meshtastic</small></div>
+      <span id="connection" class="pill warn">подключение…</span>
+    </header>
+    <nav>
+      <button class="tab active" data-tab="messages">Сообщения <span id="messages-unread" class="unread-dot" aria-label="Есть новые сообщения" hidden></span></button>
+      <button class="tab" data-tab="nodes">Ноды <span id="node-count"></span></button>
+      <button class="tab" data-tab="map">Карта <span id="map-count"></span></button>
+      <button class="tab" data-tab="air">Эфир <span id="air-count"></span></button>
+      <button class="tab" data-tab="status">Состояние</button>
+      <button class="tab" data-tab="settings">Настройки</button>
+      <button class="tab" data-tab="mode">Режим</button>
+    </nav>
+
+    <main>
+      <section id="messages" class="view active">
+        <div id="message-channels" class="channel-tabs" role="tablist" aria-label="Потоки сообщений"></div>
+        <div class="toolbar message-toolbar">
+          <label>Отправить в <select id="channel"><option value="0">0 · Первичный</option></select></label>
+          <span id="message-filter-label" class="muted">Показаны все каналы</span>
+          <span id="notification-state" class="notification-state muted">LED: проверка…</span>
+          <button id="mark-read" type="button" class="secondary">Прочитано</button>
+          <button id="refresh" class="secondary">Обновить</button>
+        </div>
+        <details class="signal-help">
+          <summary>Что означают RSSI и SNR?</summary>
+          <p><b>RSSI</b> — мощность принятого сигнала. Чем значение ближе к нулю, тем сигнал сильнее: −70 dBm сильнее −110 dBm.</p>
+          <p><b>SNR</b> — отношение сигнала к шуму. Чем выше, тем чище приём. LoRa умеет принимать и при отрицательном SNR; например −5 dB лучше −13 dB.</p>
+        </details>
+        <div id="message-list" class="cards"><p class="muted">Загрузка архива…</p></div>
+        <form id="send-form">
+          <textarea id="message" maxlength="200" rows="2" placeholder="Введите сообщение…" required></textarea>
+          <div id="emoji-bar" class="emoji-bar" aria-label="Популярные эмодзи">
+            <button type="button" class="emoji-button" data-emoji="👍" aria-label="Добавить 👍">👍</button>
+            <button type="button" class="emoji-button" data-emoji="❤️" aria-label="Добавить ❤️">❤️</button>
+            <button type="button" class="emoji-button" data-emoji="😂" aria-label="Добавить 😂">😂</button>
+            <button type="button" class="emoji-button" data-emoji="🔥" aria-label="Добавить 🔥">🔥</button>
+            <button type="button" class="emoji-button" data-emoji="🎉" aria-label="Добавить 🎉">🎉</button>
+            <button type="button" class="emoji-button" data-emoji="👋" aria-label="Добавить 👋">👋</button>
+            <button type="button" class="emoji-button" data-emoji="🤝" aria-label="Добавить 🤝">🤝</button>
+            <button type="button" class="emoji-button" data-emoji="✅" aria-label="Добавить ✅">✅</button>
+            <button type="button" class="emoji-button" data-emoji="❓" aria-label="Добавить ❓">❓</button>
+            <button type="button" class="emoji-button" data-emoji="📡" aria-label="Добавить 📡">📡</button>
+            <button type="button" class="emoji-button" data-emoji="🛰️" aria-label="Добавить 🛰️">🛰️</button>
+            <button type="button" class="emoji-button" data-emoji="🐰" aria-label="Добавить 🐰">🐰</button>
+          </div>
+          <div class="send-row">
+            <span id="destination">В общий канал</span>
+            <button id="broadcast" type="button" class="secondary" hidden>Вернуться в общий</button>
+            <span id="chars">0/200</span>
+            <button type="submit">Отправить</button>
+          </div>
+          <p id="send-result" class="muted"></p>
+        </form>
+      </section>
+
+      <section id="nodes" class="view">
+        <input id="node-search" type="search" placeholder="Имя, E1CD, !b3b9e1cd или номер" />
+        <div id="node-list" class="cards"></div>
+      </section>
+
+      <section id="map" class="view">
+        <div class="toolbar map-tools">
+          <label><input id="map-active" type="checkbox" /> Только слышанные за 2 часа</label>
+          <label><input id="map-links" type="checkbox" checked /> Связи соседей</label>
+          <span class="map-zoom"><button id="map-zoom-out" type="button" class="secondary" aria-label="Уменьшить масштаб">−</button><b id="map-radius">20 км</b><button id="map-zoom-in" type="button" class="secondary" aria-label="Увеличить масштаб">+</button></span>
+          <span class="own-node-key"><i>МЫ</i> Наша нода</span>
+          <span id="map-caption" class="muted"></span>
+        </div>
+        <div id="map-stage" aria-label="Локальная карта нод"><div class="map-empty muted">Загрузка координат…</div></div>
+        <p class="muted">Локальная карта центрируется на «МЫ» и показывает расстояния в километрах. Дальние ноды не сжимают карту: используйте −/+ для изменения радиуса. Координаты базовой точки не передаются по LoRa.</p>
+      </section>
+
+      <section id="air" class="view">
+        <div class="toolbar air-tools">
+          <input id="air-search" type="search" placeholder="Тип пакета, нода или ID" />
+          <select id="air-kind"><option value="">Все пакеты</option><option value="TEXT_MESSAGE_APP">Текст</option><option value="POSITION_APP">Позиции</option><option value="TELEMETRY_APP">Телеметрия</option><option value="TRACEROUTE_APP">Трассировка</option><option value="ROUTING_APP">Маршрутизация</option></select>
+          <button id="clear-air" class="secondary">Очистить</button>
+        </div>
+        <div id="air-summary" class="status-grid"></div>
+        <div id="air-list" class="cards"></div>
+      </section>
+
+      <section id="status" class="view">
+        <div id="status-grid" class="status-grid"><p class="muted">Загрузка…</p></div>
+        <div class="chart-card"><strong>Загрузка эфира за текущую сессию</strong><canvas id="air-chart"></canvas><div class="legend"><span>■ канал занят</span><span>■ передача нашей ноды</span></div></div>
+        <details><summary>Что работает без интернета?</summary><p>Эта страница, журнал и обмен с платой работают внутри вашей Wi‑Fi сети. Сами сообщения уходят и приходят по LoRa. Интернет нужен только для внешних карт.</p></details>
+      </section>
+
+      <section id="settings" class="view">
+        <article class="card settings-warning">
+          <strong>Расширенный ручной редактор</strong>
+          <p>Здесь доступны все системные разделы, модули, каналы и данные владельца, которые передала плата. Ошибка в Radio, Region, Wi‑Fi или Security может перезагрузить устройство либо разорвать соединение.</p>
+        </article>
+        <div class="settings-toolbar">
+          <label>Раздел <select id="settings-section"><option value="">Загрузка конфигурации…</option></select></label>
+          <button id="settings-reload" type="button" class="secondary">Отменить правки</button>
+          <button id="settings-export" type="button" class="secondary">Скачать резервную копию</button>
+        </div>
+        <textarea id="settings-json" class="settings-json" rows="22" spellcheck="false" aria-label="JSON выбранного раздела"></textarea>
+        <div class="settings-actions">
+          <span id="settings-state" class="muted">Дождитесь полной загрузки конфигурации.</span>
+          <button id="settings-apply" type="button" class="danger">Проверить и применить</button>
+        </div>
+        <details><summary>Как редактировать</summary><p>Изменяйте только значения справа от двоеточия. Имена полей и <code>$typeName</code> менять нельзя. Числа перечислений задаются их числовыми значениями. Байтовые поля сохраняются как <code>{"$bytes":"base64…"}</code>, а 64‑битные числа — как <code>{"$bigint":"…"}</code>.</p></details>
+      </section>
+
+      <section id="mode" class="view">
+        <article class="card mode-card">
+          <h2>Режим устройства</h2>
+          <p>Доступны Meshtastic через домашний Wi‑Fi, портативный Meshtastic AP для прямого подключения телефона и RNode для Reticulum. Одновременно работает только один режим.</p>
+          <div id="dualboot-status" class="result muted">Проверяю раздел RNode…</div>
+          <div id="portable-controls">
+            <label for="portable-password">Пароль портативной точки</label>
+            <input id="portable-password" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="8–63 латинских символа или цифры" />
+            <button id="boot-portable" type="button">Включить BarbieNode-Portable</button>
+          </div>
+          <button id="boot-home" type="button" class="secondary" hidden>Вернуться в домашнюю Wi‑Fi сеть</button>
+          <button id="boot-rnode" type="button" class="danger" disabled>Перейти в RNode / Reticulum</button>
+          <p id="dualboot-result" class="muted"></p>
+          <small>Портативная точка работает по адресу 192.168.4.1 и не изменяет сохранённые параметры домашней сети. После перехода в RNode плата подключится к домашнему Wi‑Fi; при неудаче за 90 секунд она автоматически вернётся в Meshtastic. Аварийный возврат из RNode — удерживать BOOT при включении.</small>
+          <hr />
+          <h2>Обновление RNode по Wi‑Fi</h2>
+          <p>Выберите application image RNode для BarbieNode. Он записывается только в неактивный раздел <code>app1</code>; Meshtastic останется рабочим при ошибке или обрыве.</p>
+          <input id="rnode-firmware" type="file" accept=".bin,application/octet-stream" />
+          <button id="upload-rnode" type="button" class="secondary">Проверить и загрузить в app1</button>
+          <p id="firmware-result" class="muted"></p>
+          <small>Браузер и плата независимо проверяют SHA‑256 и внутреннюю метку RNode dual‑boot. Загрузка не переключает режим автоматически.</small>
+        </article>
+      </section>
+    </main>
+
+    <dialog id="node-dialog">
+      <button id="close-dialog" class="close" aria-label="Закрыть">×</button>
+      <div id="node-details"></div>
+    </dialog>
+
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>

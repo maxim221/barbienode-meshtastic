@@ -1,0 +1,215 @@
+#!/usr/bin/env python3
+"""Install the E22 dual-boot and autonomous bot additions into a Meshtastic checkout."""
+
+from pathlib import Path
+from shutil import copy2
+import sys
+
+
+def replace_once(text: str, before: str, after: str) -> str:
+    if after in text:
+        return text
+    if text.count(before) != 1:
+        raise RuntimeError(f"Expected exactly one anchor, found {text.count(before)}: {before!r}")
+    return text.replace(before, after, 1)
+
+
+if len(sys.argv) != 2:
+    raise SystemExit("usage: apply-dualboot.py /path/to/meshtastic-firmware")
+
+root = Path(sys.argv[1]).resolve()
+source = root / "src"
+handler = source / "mesh/http/ContentHandler.cpp"
+wifi_client = source / "mesh/wifi/WiFiAPClient.cpp"
+if not handler.is_file():
+    raise SystemExit(f"Meshtastic ContentHandler.cpp not found under {root}")
+if not wifi_client.is_file():
+    raise SystemExit(f"Meshtastic WiFiAPClient.cpp not found under {root}")
+
+overlay = Path(__file__).resolve().parent / "overlay"
+copy2(overlay / "DualBootHandler.h", source / "DualBootHandler.h")
+copy2(overlay / "DualBootHandler.cpp", source / "DualBootHandler.cpp")
+copy2(overlay / "ReplyBotModule.h", source / "modules/ReplyBotModule.h")
+copy2(overlay / "ReplyBotModule.cpp", source / "modules/ReplyBotModule.cpp")
+
+text = handler.read_text()
+# The RGB-heartbeat revision already registered the notification endpoints.
+# Normalize that older block before adding the firmware updater, otherwise the
+# notification declarations are duplicated during an in-place upgrade.
+if 'nodeDualBootUpdateRNode' not in text:
+    text = text.replace(
+        '    ResourceNode *nodeDualBootHome = new ResourceNode("/dualboot/home", "POST", &handleDualBootHomeWiFi);\n'
+        '    ResourceNode *nodeNotificationStatus = new ResourceNode("/notifications/status", "GET", &handleNotificationStatus);\n'
+        '    ResourceNode *nodeNotificationRead = new ResourceNode("/notifications/read", "POST", &handleNotificationRead);',
+        '    ResourceNode *nodeDualBootHome = new ResourceNode("/dualboot/home", "POST", &handleDualBootHomeWiFi);',
+    )
+    for server in ('secureServer', 'insecureServer'):
+        text = text.replace(
+            f'    {server}->registerNode(nodeDualBootHome);\n'
+            f'    {server}->registerNode(nodeNotificationStatus);\n'
+            f'    {server}->registerNode(nodeNotificationRead);',
+            f'    {server}->registerNode(nodeDualBootHome);',
+        )
+# Upgrade a checkout that already has the earlier two-mode overlay without
+# duplicating its nodes. Fresh and already-upgraded checkouts skip this block.
+if 'ResourceNode *nodeDualBootHome' not in text:
+    text = text.replace(
+        '    ResourceNode *nodeRestart = new ResourceNode("/restart", "POST", &handleRestart);\n'
+        '    ResourceNode *nodeDualBootStatus = new ResourceNode("/dualboot/status", "GET", &handleDualBootStatus);\n'
+        '    ResourceNode *nodeDualBootRNode = new ResourceNode("/dualboot/rnode", "POST", &handleDualBootRNode);',
+        '    ResourceNode *nodeRestart = new ResourceNode("/restart", "POST", &handleRestart);',
+    )
+    text = text.replace(
+        '    secureServer->registerNode(nodeRestart);\n'
+        '    secureServer->registerNode(nodeDualBootStatus);\n'
+        '    secureServer->registerNode(nodeDualBootRNode);',
+        '    secureServer->registerNode(nodeRestart);',
+    )
+    text = text.replace(
+        '    insecureServer->registerNode(nodeRestart);\n'
+        '    insecureServer->registerNode(nodeDualBootStatus);\n'
+        '    insecureServer->registerNode(nodeDualBootRNode);',
+        '    insecureServer->registerNode(nodeRestart);',
+    )
+text = replace_once(
+    text,
+    '#include "mesh/http/WebServer.h"',
+    '#include "mesh/http/WebServer.h"\n#include "DualBootHandler.h"',
+)
+text = replace_once(
+    text,
+    '    ResourceNode *nodeRestart = new ResourceNode("/restart", "POST", &handleRestart);',
+    '    ResourceNode *nodeRestart = new ResourceNode("/restart", "POST", &handleRestart);\n'
+    '    ResourceNode *nodeDualBootStatus = new ResourceNode("/dualboot/status", "GET", &handleDualBootStatus);\n'
+    '    ResourceNode *nodeDualBootRNode = new ResourceNode("/dualboot/rnode", "POST", &handleDualBootRNode);\n'
+    '    ResourceNode *nodeDualBootAP = new ResourceNode("/dualboot/ap", "POST", &handleDualBootPortableAP);\n'
+    '    ResourceNode *nodeDualBootHome = new ResourceNode("/dualboot/home", "POST", &handleDualBootHomeWiFi);',
+)
+text = replace_once(
+    text,
+    '    ResourceNode *nodeDualBootHome = new ResourceNode("/dualboot/home", "POST", &handleDualBootHomeWiFi);',
+    '    ResourceNode *nodeDualBootHome = new ResourceNode("/dualboot/home", "POST", &handleDualBootHomeWiFi);\n'
+    '    ResourceNode *nodeNotificationStatus = new ResourceNode("/notifications/status", "GET", &handleNotificationStatus);\n'
+    '    ResourceNode *nodeNotificationRead = new ResourceNode("/notifications/read", "POST", &handleNotificationRead);\n'
+    '    ResourceNode *nodeDualBootUpdateRNode = new ResourceNode("/dualboot/update/rnode", "POST", &handleDualBootUpdateRNode);',
+)
+text = replace_once(
+    text,
+    '    secureServer->registerNode(nodeRestart);',
+    '    secureServer->registerNode(nodeRestart);\n'
+    '    secureServer->registerNode(nodeDualBootStatus);\n'
+    '    secureServer->registerNode(nodeDualBootRNode);\n'
+    '    secureServer->registerNode(nodeDualBootAP);\n'
+    '    secureServer->registerNode(nodeDualBootHome);',
+)
+text = replace_once(
+    text,
+    '    secureServer->registerNode(nodeDualBootHome);',
+    '    secureServer->registerNode(nodeDualBootHome);\n'
+    '    secureServer->registerNode(nodeNotificationStatus);\n'
+    '    secureServer->registerNode(nodeNotificationRead);\n'
+    '    secureServer->registerNode(nodeDualBootUpdateRNode);',
+)
+text = replace_once(
+    text,
+    '    insecureServer->registerNode(nodeRestart);',
+    '    insecureServer->registerNode(nodeRestart);\n'
+    '    insecureServer->registerNode(nodeDualBootStatus);\n'
+    '    insecureServer->registerNode(nodeDualBootRNode);\n'
+    '    insecureServer->registerNode(nodeDualBootAP);\n'
+    '    insecureServer->registerNode(nodeDualBootHome);',
+)
+text = replace_once(
+    text,
+    '    insecureServer->registerNode(nodeDualBootHome);',
+    '    insecureServer->registerNode(nodeDualBootHome);\n'
+    '    insecureServer->registerNode(nodeNotificationStatus);\n'
+    '    insecureServer->registerNode(nodeNotificationRead);\n'
+    '    insecureServer->registerNode(nodeDualBootUpdateRNode);',
+)
+handler.write_text(text)
+
+wifi_text = wifi_client.read_text()
+wifi_text = replace_once(
+    wifi_text,
+    '#include "mesh/wifi/WiFiAPClient.h"',
+    '#include "mesh/wifi/WiFiAPClient.h"\n#include "DualBootHandler.h"',
+)
+wifi_text = replace_once(
+    wifi_text,
+    'static bool wifiReconnectPending = false;',
+    'static bool wifiReconnectPending = false;\n'
+    '#if defined(ARCH_ESP32) && defined(E22_S3_N16R8)\n'
+    'static constexpr unsigned long HOME_WIFI_FALLBACK_MS = 60000;\n'
+    'static unsigned long homeWifiWaitStartMillis = 0;\n'
+    'static bool homeWifiWaitStarted = false;\n'
+    '#endif',
+)
+wifi_text = replace_once(
+    wifi_text,
+    'static int32_t reconnectWiFi()\n{',
+    'static int32_t reconnectWiFi()\n{\n'
+    '#if defined(ARCH_ESP32) && defined(E22_S3_N16R8)\n'
+    '    if (isDualBootPortableAPActive())\n'
+    '        return 300000;\n'
+    '    if (config.network.wifi_enabled && !WiFi.isConnected()) {\n'
+    '        if (!homeWifiWaitStarted) {\n'
+    '            homeWifiWaitStartMillis = millis();\n'
+    '            homeWifiWaitStarted = true;\n'
+    '        } else if (millis() - homeWifiWaitStartMillis >= HOME_WIFI_FALLBACK_MS) {\n'
+    '            isReconnecting = true;\n'
+    '            if (startDualBootPortableAP(true)) {\n'
+    '                needReconnect = false;\n'
+    '                wifiReconnectPending = false;\n'
+    '                onNetworkConnected();\n'
+    '                LOG_WARN("Home WiFi unavailable for 60 seconds; portable AP ready at 192.168.4.1");\n'
+    '                return 300000;\n'
+    '            }\n'
+    '            isReconnecting = false;\n'
+    '            homeWifiWaitStartMillis = millis();\n'
+    '            LOG_WARN("Portable AP fallback needs a saved AP password; continuing home WiFi attempts");\n'
+    '        }\n'
+    '    }\n'
+    '#endif',
+)
+wifi_text = replace_once(
+    wifi_text,
+    '    case ARDUINO_EVENT_WIFI_STA_GOT_IP:\n'
+    '        LOG_INFO("Obtained IP address: %s", WiFi.localIP().toString().c_str());',
+    '    case ARDUINO_EVENT_WIFI_STA_GOT_IP:\n'
+    '#if defined(E22_S3_N16R8)\n'
+    '        homeWifiWaitStarted = false;\n'
+    '#endif\n'
+    '        LOG_INFO("Obtained IP address: %s", WiFi.localIP().toString().c_str());',
+)
+disconnect_guard = '        if (!isReconnecting) {'
+guarded_disconnect = (
+    '#if defined(E22_S3_N16R8)\n'
+    '        if (!isReconnecting && !isDualBootPortableAPActive()) {\n'
+    '#else\n'
+    '        if (!isReconnecting) {\n'
+    '#endif'
+)
+if guarded_disconnect not in wifi_text:
+    if wifi_text.count(disconnect_guard) != 2:
+        raise RuntimeError(
+            f"Expected exactly two WiFi reconnect guards, found {wifi_text.count(disconnect_guard)}"
+        )
+    wifi_text = wifi_text.replace(disconnect_guard, guarded_disconnect)
+wifi_text = replace_once(
+    wifi_text,
+    'bool initWifi()\n{',
+    'bool initWifi()\n{\n'
+    '#if defined(ARCH_ESP32) && defined(E22_S3_N16R8)\n'
+    '    if (startDualBootPortableAP()) {\n'
+    '#if !MESHTASTIC_EXCLUDE_WEBSERVER\n'
+    '        createSSLCert();\n'
+    '#endif\n'
+    '        onNetworkConnected();\n'
+    '        LOG_INFO("Portable WiFi AP ready: BarbieNode-Portable at 192.168.4.1");\n'
+    '        return true;\n'
+    '    }\n'
+    '#endif',
+)
+wifi_client.write_text(wifi_text)
+print(f"Dual-boot handlers and autonomous bots installed in {root}")

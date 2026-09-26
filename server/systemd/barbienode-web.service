@@ -1,0 +1,24 @@
+[Unit]
+Description=BarbieNode local Meshtastic interface
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+ExecStart=/usr/bin/python3 /opt/barbienode-web/web_server.py
+EnvironmentFile=-/etc/barbienode/barbienode.env
+Environment=WEB_ROOT=/opt/barbienode-web
+Environment=PORT=8082
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+[Unit]
+Description=NightBot Meshtastic message archive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+StateDirectory=nightbot-archive
+ExecStart=/usr/bin/python3 /opt/nightbot-archive/nightbot_archive.py
+EnvironmentFile=-/etc/barbienode/barbienode.env
+Environment=POLL_SECONDS=60
+Environment=PORT=8081
+Environment=DB_PATH=/var/lib/nightbot-archive/nightbot.sqlite3
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target
