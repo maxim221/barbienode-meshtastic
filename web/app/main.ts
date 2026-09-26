@@ -25,6 +25,7 @@ let airEvents: AirEvent[] = JSON.parse(localStorage.getItem("meshtastic-air-even
 let airtime: AirtimeSample[] = JSON.parse(localStorage.getItem("meshtastic-airtime")||"[]");
 let device: MeshDevice | undefined;
 let selectedNode: number | undefined;
+let directContext = "";
 let myNode = 0;
 let ownNodeNum = 0;
 let mapRenderPending=false;
@@ -49,7 +50,8 @@ const nodeName = (n:number|string) => {
 };
 const fmtTime = (ts:number) => new Date(ts * 1000).toLocaleString("ru-RU", {day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
 const json = (v:unknown) => JSON.stringify(v, (_k,x) => typeof x === "bigint" ? x.toString() : x, 2);
-const routingErrors:Record<number,string>={1:"Маршрут к ноде неизвестен",2:"Получен отказ от промежуточной ноды",3:"Истекло время ожидания",4:"Нет подходящего радио-интерфейса",5:"Нода не ответила после повторных передач",6:"Канал недоступен",7:"Пакет слишком большой",8:"Нода получила запрос, но не может ответить",9:"Превышен лимит эфирного времени",32:"Неизвестен публичный ключ ноды"};
+const routingErrors:Record<number,string>={1:"Маршрут к ноде неизвестен",2:"Получен отказ от промежуточной ноды",3:"Истекло время ожидания",4:"Нет подходящего радио-интерфейса",5:"Исчерпаны повторные передачи",6:"Канал недоступен",7:"Пакет слишком большой",8:"Нода получила запрос, но её сервис не ответил",9:"Превышен допустимый эфирный цикл",32:"Удалённая нода отклонила запрос",33:"Удалённая нода не разрешила запрос",34:"Не удалось использовать PKI",35:"У принимающей ноды нет публичного ключа отправителя",36:"Сессия администрирования недействительна",37:"Публичный ключ не разрешён для администрирования",38:"Превышен лимит частоты пакетов",39:"Нет публичного ключа ноды-получателя"};
+const routingActions:Record<number,string>={1:"Дождитесь свежего пакета от ноды и повторите позднее либо используйте общий канал.",2:"Не повторяйте сразу: промежуточная нода отказалась пересылать пакет.",3:"Проверьте доступность ноды и попробуйте позднее.",4:"Проверьте, что LoRa включена и регион настроен.",5:"Не повторяйте сразу: пакет мог выйти в эфир, но подтверждение не вернулось.",6:"Выберите включённый канал, общий с получателем.",7:"Сократите текст сообщения.",8:"Получатель доступен, но запрошенная функция у него не работает.",9:"Подождите освобождения лимита эфирного времени.",32:"Проверьте тип запроса и совместимость прошивки удалённой ноды.",33:"Используйте канал и ключ, разрешённые удалённой нодой.",34:"Обновите NodeInfo/ключи обеих нод и попробуйте позднее.",35:"Получатель должен сначала получить свежий NodeInfo вашей ноды.",36:"Повторно подключитесь к плате и создайте новую административную сессию.",37:"Этот ключ не входит в список администраторов удалённой ноды.",38:"Подождите перед следующей попыткой.",39:"Дождитесь свежего NodeInfo получателя либо вернитесь в общий канал."};
 const errorText = (e:unknown) => {
   if(e&&typeof e==="object"&&"error" in e){const x=e as AnyRecord;return `${routingErrors[Number(x.error)]||`Ошибка маршрутизации ${x.error}`} (пакет #${x.id??"—"})`}
   return e instanceof Error ? e.message : typeof e === "string" ? e : json(e);
@@ -119,6 +121,25 @@ function addNode(num:number, patch:AnyRecord={}) {
   num >>>= 0;
   const current = nodes.get(num) || {num};
   nodes.set(num, {...current, ...patch, user:{...(current.user||{}), ...(patch.user||{})}});
+}
+
+function hasUsablePublicKey(num:number){
+  const value=nodes.get(num>>>0)?.user?.publicKey;
+  const bytes=value instanceof Uint8Array?value:Array.isArray(value)?Uint8Array.from(value):undefined;
+  return !!bytes&&bytes.length===32&&bytes.some(byte=>byte!==0);
+}
+
+function sendFailureText(error:unknown,target?:number){
+  const packet=error&&typeof error==="object"&&"id" in error?`Пакет #${(error as AnyRecord).id??"—"}. `:"";
+  const code=error&&typeof error==="object"&&"error" in error?Number((error as AnyRecord).error):undefined;
+  if(code===39)return `${packet}Личное сообщение НЕ передано в эфир: у платы нет публичного ключа ${target?nodeName(target):"получателя"}.
+
+Почему: запись о ноде могла прийти из старого ESP-архива или из пакета без NodeInfo. Одного короткого ID для зашифрованной личной отправки недостаточно.
+
+Что делать: не повторяйте отправку; дождитесь свежего NodeInfo этой ноды либо нажмите «Вернуться в общий» и отправьте короткое публичное сообщение с ID адресата.`;
+  if(code===5)return `${packet}${routingErrors[5]}. Плата пыталась доставить сообщение, но подтверждение не пришло. Не повторяйте сразу: пакет мог выйти в эфир, а обратный маршрут мог не сработать.`;
+  if(code!==undefined)return `${packet}Ошибка маршрутизации ${code}: ${routingErrors[code]||"неизвестная ошибка"}.\n\nЧто делать: ${routingActions[code]||"Не повторяйте отправку сразу; откройте полные данные пакета и проверьте состояние ноды."}`;
+  return `Ошибка отправки: ${errorText(error)}`;
 }
 
 const isOwnNode=(num:number)=>num===myNode||num===ownNodeNum;
@@ -264,7 +285,7 @@ function renderMessages() {
     head.append(who, Object.assign(document.createElement("span"),{className:"meta",textContent:fmtTime(m.ts)}),channel,addressingBadge,Object.assign(document.createElement("span"),{className:"badge",textContent:m.source}));
     const text=document.createElement("div"); text.className="text"; text.textContent=m.text;
     const actions=document.createElement("div");actions.className="message-actions";
-    if(m.event!=="tx"){const direct=addressing.kind==="direct"&&fromNum>0,reply=document.createElement("button");reply.type="button";reply.className="secondary";reply.textContent=direct?`Ответить лично ${short(m.from)}`:`Ответить в ${channelName(m.channel)}`;reply.addEventListener("click",()=>{direct?setDirect(fromNum):setBroadcast();$<HTMLSelectElement>("channel").value=String(m.channel);updateDestination();$<HTMLTextAreaElement>("message").focus()});actions.append(reply)}
+    if(m.event!=="tx"){const direct=addressing.kind==="direct"&&fromNum>0,reply=document.createElement("button");reply.type="button";reply.className="secondary";reply.textContent=direct?`Ответить лично ${short(m.from)}`:`Ответить в ${channelName(m.channel)}`;reply.addEventListener("click",()=>{const foreignDirect=direct&&addressing.label!=="Лично вам",context=[m.source==="архив ESP"?"Это архивная запись: данные о ноде и её ключ могли устареть.":"",foreignDirect?`Исходное сообщение было адресовано ${addressing.target?short(addressing.target):"другой ноде"}, а не вашей ноде.`:""] .filter(Boolean).join(" ");direct?setDirect(fromNum,context):setBroadcast();$<HTMLSelectElement>("channel").value=String(m.channel);updateDestination();$<HTMLTextAreaElement>("message").focus()});actions.append(reply)}
     if(m.rssi!==undefined||m.snr!==undefined){const signal=document.createElement("span");signal.className="meta signal";signal.title="RSSI: ближе к 0 — сильнее. SNR: выше — чище.";signal.textContent=[m.rssi!==undefined?`RSSI ${m.rssi} dBm`:"",m.snr!==undefined?`SNR ${Number(m.snr).toFixed(2)} dB`:""].filter(Boolean).join(" · ");actions.append(signal)}
     const details=document.createElement("details"); const summary=document.createElement("summary"); summary.textContent="Полные данные";
     const pre=document.createElement("pre"); pre.textContent=json({...m,addressing,fromName:fromNum?nodeName(fromNum):undefined,fromDecimal:fromNum||undefined,fromHex:fromNum?hex(fromNum):m.from});
@@ -337,9 +358,20 @@ function openNode(num:number) {
   const result=document.createElement("div"); result.id="node-action-result"; result.className="result muted"; result.textContent="Ответы на запросы появятся здесь.";
   box.append(title,pre,actions,result); ($<HTMLDialogElement>("node-dialog")).showModal();
 }
-function updateDestination(){const channel=Number($<HTMLSelectElement>("channel").value)||0;$("destination").textContent=selectedNode===undefined?`Широковещательно · ${channelName(channel)}`:`Лично: ${nodeName(selectedNode)} (${short(hex(selectedNode))}) · ${channelName(channel)}`}
-function setDirect(num:number) { selectedNode=num;updateDestination();$<HTMLButtonElement>("broadcast").hidden=false;($<HTMLDialogElement>("node-dialog")).close();$<HTMLTextAreaElement>("message").focus()}
-function setBroadcast(){selectedNode=undefined;updateDestination();$<HTMLButtonElement>("broadcast").hidden=true}
+function updateDestination(){
+  const channel=Number($<HTMLSelectElement>("channel").value)||0,guidance=$("send-guidance"),send=$<HTMLButtonElement>("send-button");
+  if(selectedNode===undefined){
+    $("destination").textContent=`Широковещательно · ${channelName(channel)}`;guidance.hidden=true;guidance.textContent="";guidance.className="send-guidance";send.disabled=false;send.textContent="Отправить";return;
+  }
+  const keyKnown=hasUsablePublicKey(selectedNode),name=`${nodeName(selectedNode)} (${short(hex(selectedNode))})`;
+  $("destination").textContent=`Лично: ${name} · ${channelName(channel)}`;
+  guidance.hidden=false;
+  guidance.className=`send-guidance ${keyKnown?directContext?"warn":"ok":"bad"}`;
+  guidance.textContent=[directContext,keyKnown?"Публичный ключ получателя известен: личная отправка доступна.":`Личная отправка заблокирована: у платы нет 32-байтного публичного ключа ${name}. Без него возникнет ошибка 39, а пакет не выйдет в эфир. Дождитесь свежего NodeInfo или вернитесь в общий канал.`].filter(Boolean).join("\n");
+  send.disabled=!keyKnown;send.textContent=keyKnown?"Отправить лично":"Нет публичного ключа";
+}
+function setDirect(num:number,context="") { selectedNode=num;directContext=context;updateDestination();$<HTMLButtonElement>("broadcast").hidden=false;($<HTMLDialogElement>("node-dialog")).close();$<HTMLTextAreaElement>("message").focus()}
+function setBroadcast(){selectedNode=undefined;directContext="";updateDestination();$<HTMLButtonElement>("broadcast").hidden=true}
 function setAction(text:string){ const e=document.getElementById("node-action-result"); if(e)e.textContent=text; }
 async function requestPosition(num:number){if(!device)return setAction("Плата ещё не подключена");setAction(`Запрос позиции отправляется ${nodeName(num)}…`);try{const id=await device.requestPosition(num);setAction(`Запрос #${id} отправлен. Ждём ответ по LoRa; это может занять минуты. Ответ появится здесь.`)}catch(e){setAction(`Ошибка: ${errorText(e)}`)}}
 async function traceRoute(num:number){if(!device)return setAction("Плата ещё не подключена");setAction(`Запрос трассировки отправляется ${nodeName(num)}…`);try{const id=await device.traceRoute(num);setAction(`Запрос #${id} отправлен. Ждём маршрут по LoRa; если нода недоступна, ответа может не быть.`)}catch(e){setAction(`Ошибка: ${errorText(e)}`)}}
@@ -442,7 +474,7 @@ async function connect(){
     device=new MeshDevice(transport,Math.floor(Math.random()*0xffffffff));
     device.events.onDeviceStatus.subscribe(s=>statusPill(s===DeviceStatusEnum.DeviceConfigured?"плата подключена":"подключение…",s===DeviceStatusEnum.DeviceConfigured?"ok":"warn"));
     device.events.onMyNodeInfo.subscribe(info=>{statusPill("плата подключена","ok");myNode=info.myNodeNum>>>0;addNode(myNode,{user:{longName:"BarbieNode"}});renderMessages();renderNodes();scheduleMap()});
-    device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);refreshSettingsOptions()}renderNodes();scheduleMap()}});
+    device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(selectedNode===num)updateDestination();if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);refreshSettingsOptions()}renderNodes();scheduleMap()}});
     device.events.onChannelPacket.subscribe(info=>{const c=info as AnyRecord;channels.set(Number(c.index),c);renderChannels();refreshSettingsOptions()});
     device.events.onConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){radioConfigs.set(key,value);defaultRadioConfigs.delete(key);refreshSettingsOptions()}});
     device.events.onModuleConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){moduleConfigs.set(key,value);defaultModuleConfigs.delete(key);refreshSettingsOptions()}});
@@ -461,14 +493,16 @@ async function connect(){
 
 async function sendMessage(event:SubmitEvent){
   event.preventDefault();const field=$<HTMLTextAreaElement>("message"),text=field.value.trim();if(!text||!device)return;
-  const result=$("send-result");result.textContent="Отправка…";
+  const result=$("send-result"),direct=selectedNode!==undefined;
+  if(direct&&!hasUsablePublicKey(selectedNode!)){updateDestination();result.className="send-feedback bad";result.textContent="Отправка остановлена до эфира: публичный ключ получателя неизвестен. Выберите «Вернуться в общий» или дождитесь свежего NodeInfo.";return}
+  result.className="send-feedback muted";result.textContent="Отправка…";
   try{
-    const direct=selectedNode!==undefined,id=await device.sendText(text,direct?selectedNode:"broadcast",direct,Number(($<HTMLSelectElement>("channel")).value));
+    const target=selectedNode,id=await device.sendText(text,direct?target:"broadcast",direct,Number(($<HTMLSelectElement>("channel")).value));
     const m:Message={ts:Math.floor(Date.now()/1000),event:"tx",from:myNode?hex(myNode):"self",to:direct?hex(selectedNode!):"^all",channel:Number(($<HTMLSelectElement>("channel")).value),text,id,source:"этот браузер"};
     messages.push(m);const sent=messages.filter(x=>x.event==="tx").slice(-200);localStorage.setItem("meshtastic-esp-sent",JSON.stringify(sent));renderMessages();field.value="";$("chars").textContent="0/200";
     let saved=true;try{await saveSentArchive()}catch{saved=false}
-    result.textContent=(direct?`Пакет #${id} отправлен; ждём подтверждение ноды.`:`Пакет #${id} принят вашей платой. Для общего канала доставка получателям не подтверждается.`)+(saved?" Сохранено на ESP.":" Сохранено только в этом браузере.");
-  }catch(e){result.textContent=`Ошибка отправки: ${errorText(e)}`}
+    result.className="send-feedback ok";result.textContent=(direct?`Пакет #${id} передан плате для личной доставки; ждём подтверждение ноды.`:`Пакет #${id} принят вашей платой. Для общего канала доставка получателям не подтверждается.`)+(saved?" Сохранено на ESP.":" Сохранено только в этом браузере.");
+  }catch(e){result.className="send-feedback bad";result.textContent=sendFailureText(e,selectedNode)}
 }
 
 document.querySelectorAll<HTMLButtonElement>(".tab").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll(".tab,.view").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab!).classList.add("active");if(b.dataset.tab==="messages"){if(selectedMessageChannel==="all")unreadChannels.clear();else unreadChannels.delete(selectedMessageChannel);updateUnreadIndicators();void acknowledgeViewedMessages()}if(b.dataset.tab==="status")requestAnimationFrame(drawAirtime);if(b.dataset.tab==="map")scheduleMap();if(b.dataset.tab==="settings")refreshSettingsOptions()}));

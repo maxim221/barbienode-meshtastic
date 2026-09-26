@@ -40,6 +40,7 @@
         <div id="message-list" class="cards"><p class="muted">Загрузка архива…</p></div>
         <form id="send-form">
           <textarea id="message" maxlength="200" rows="2" placeholder="Введите сообщение…" required></textarea>
+          <div id="send-guidance" class="send-guidance" hidden></div>
           <div id="emoji-bar" class="emoji-bar" aria-label="Популярные эмодзи">
             <button type="button" class="emoji-button" data-emoji="👍" aria-label="Добавить 👍">👍</button>
             <button type="button" class="emoji-button" data-emoji="❤️" aria-label="Добавить ❤️">❤️</button>
@@ -58,9 +59,9 @@
             <span id="destination">В общий канал</span>
             <button id="broadcast" type="button" class="secondary" hidden>Вернуться в общий</button>
             <span id="chars">0/200</span>
-            <button type="submit">Отправить</button>
+            <button id="send-button" type="submit">Отправить</button>
           </div>
-          <p id="send-result" class="muted"></p>
+          <p id="send-result" class="send-feedback muted"></p>
         </form>
       </section>
 
