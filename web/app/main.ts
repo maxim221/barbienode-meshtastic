@@ -29,9 +29,13 @@ let directContext = "";
 let myNode = 0;
 let ownNodeNum = 0;
 let mapRenderPending=false;
+let nodeRenderTimer:number|undefined;
+let nodeCacheTimer:number|undefined;
+let initialNodeSync=true;
 let ownFixedPosition: {lat:number;lon:number} | undefined;
 let ownerConfig: AnyRecord | undefined;
 let settingsEditing=false;
+const fallbackOwner={longName:"BarbieNode 💅",shortName:"db8c"};
 const mapRadii=[2.5,5,10,20,40,80];
 let mapRadiusIndex=3;
 
@@ -49,10 +53,10 @@ const nodeName = (n:number|string) => {
   return info?.user?.longName || info?.user?.shortName || `Meshtastic ${short(hex(num))}`;
 };
 function renderOwnIdentity(){
-  const num=(myNode||ownNodeNum)>>>0,user=(num?nodes.get(num)?.user:undefined)||ownerConfig;
+  const num=(myNode||ownNodeNum)>>>0,user=ownerConfig||(num?nodes.get(num)?.user:undefined)||fallbackOwner;
   const name=String(user?.longName||"");
-  $("own-long-name").textContent=name||"Подключение…";
-  $("own-short-name").textContent=`короткое имя: ${user?.shortName||"—"}`;
+  $("own-long-name").textContent=name||fallbackOwner.longName;
+  $("own-short-name").textContent=user?.shortName||fallbackOwner.shortName;
   $("own-node-id").textContent=num?hex(num):"—";
   if(name){document.title=`${name} · Meshtastic`;const header=document.querySelector<HTMLElement>("header strong");if(header)header.textContent=name}
 }
@@ -131,6 +135,39 @@ function addNode(num:number, patch:AnyRecord={}) {
   nodes.set(num, {...current, ...patch, user:{...(current.user||{}), ...(patch.user||{})}});
 }
 
+function scheduleNodeRender(){
+  if(nodeRenderTimer!==undefined)return;
+  nodeRenderTimer=window.setTimeout(()=>{nodeRenderTimer=undefined;renderNodes();scheduleMap()},120);
+}
+
+function cachedNode(node:AnyRecord){
+  return {
+    num:Number(node.num)>>>0,
+    user:node.user?{id:node.user.id,longName:node.user.longName,shortName:node.user.shortName,hwModel:node.user.hwModel,role:node.user.role,isLicensed:node.user.isLicensed,isUnmessagable:node.user.isUnmessagable}:undefined,
+    position:node.position?{latitudeI:node.position.latitudeI,longitudeI:node.position.longitudeI,altitude:node.position.altitude,time:node.position.time,locationSource:node.position.locationSource}:undefined,
+    lastHeard:node.lastHeard,lastRssi:node.lastRssi,lastSnr:node.lastSnr,lastHops:node.lastHops,signalAt:node.signalAt,snr:node.snr,hopsAway:node.hopsAway,channel:node.channel,viaMqtt:node.viaMqtt
+  };
+}
+
+async function loadNodeCache(){
+  try{
+    const payload=await fetchJson("/node-cache.json");
+    if(!Array.isArray(payload.nodes))return;
+    for(const node of payload.nodes){const num=Number(node?.num)>>>0;if(num)addNode(num,cachedNode(node))}
+    renderOwnIdentity();renderNodes();scheduleMap();
+  }catch{}
+}
+
+async function saveNodeCache(){
+  const snapshot={savedAt:Math.floor(Date.now()/1000),nodes:[...nodes.values()].filter(node=>Number(node.num)).map(cachedNode)};
+  try{await fetch("/node-cache.json",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(snapshot)})}catch{}
+}
+
+function scheduleNodeCacheSave(){
+  if(nodeCacheTimer!==undefined)window.clearTimeout(nodeCacheTimer);
+  nodeCacheTimer=window.setTimeout(()=>{nodeCacheTimer=undefined;void saveNodeCache()},1500);
+}
+
 function hasUsablePublicKey(num:number){
   const value=nodes.get(num>>>0)?.user?.publicKey;
   const bytes=value instanceof Uint8Array?value:Array.isArray(value)?Uint8Array.from(value):undefined;
@@ -154,7 +191,7 @@ const isOwnNode=(num:number)=>num===myNode||num===ownNodeNum;
 function nodeCoordinates(n:AnyRecord){const p=n.position;if(p){const lat=Number(p.latitudeI||0)/1e7,lon=Number(p.longitudeI||0)/1e7;if(Number.isFinite(lat)&&Number.isFinite(lon)&&(lat||lon))return {lat,lon,source:"mesh"}}if(isOwnNode(n.num)&&ownFixedPosition)return {...ownFixedPosition,source:"local-fixed"};}
 function scheduleMap(){if(mapRenderPending)return;mapRenderPending=true;requestAnimationFrame(()=>{mapRenderPending=false;renderMap()})}
 
-async function loadOwnLocation(){try{const p=await fetchJson("/node-location.json"),lat=Number(p.latitude),lon=Number(p.longitude),nodeId=Number(p.nodeId)>>>0;if(Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lon)&&lon>=-180&&lon<=180&&nodeId){ownFixedPosition={lat,lon};ownNodeNum=nodeId;addNode(ownNodeNum,{user:{longName:"BarbieNode"}});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()}}catch{}}
+async function loadOwnLocation(){try{const p=await fetchJson("/node-location.json"),lat=Number(p.latitude),lon=Number(p.longitude),nodeId=Number(p.nodeId)>>>0;if(Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lon)&&lon>=-180&&lon<=180&&nodeId){ownFixedPosition={lat,lon};ownNodeNum=nodeId;if(!nodes.get(ownNodeNum)?.user)addNode(ownNodeNum,{user:fallbackOwner});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()}}catch{}}
 
 function renderMap(){
   const stage=$("map-stage");if(!stage)return;
@@ -242,7 +279,7 @@ async function applySettings(){
   let value:AnyRecord;try{value=settingsParse($<HTMLTextAreaElement>("settings-json").value)}catch(e){$("settings-state").textContent=`Ошибка JSON: ${errorText(e)}`;return}
   if(!confirm(`Применить раздел «${entry.label}»? Плата может перезагрузиться или отключиться от Wi‑Fi.`))return;
   const button=$<HTMLButtonElement>("settings-apply");button.disabled=true;$("settings-state").textContent="Отправляю конфигурацию на плату…";
-  try{const editor=device.meshClient.config.editor as AnyRecord;if(entry.kind==="radio")editor.setRadioSection(entry.key,value);else if(entry.kind==="module")editor.setModuleSection(entry.key,value);else if(entry.kind==="channel")editor.setChannel(value);else editor.setOwner(value);const committed=await editor.commit();if(committed.status==="error")throw committed.error;if(entry.kind==="radio")radioConfigs.set(entry.key!,value);else if(entry.kind==="module")moduleConfigs.set(entry.key!,value);else if(entry.kind==="channel")channels.set(entry.index!,value);else ownerConfig=value;settingsEditing=false;$("settings-state").textContent="Настройки применены. Если раздел требует перезагрузки, соединение восстановится автоматически.";refreshSettingsOptions()}catch(e){$("settings-state").textContent=`Ошибка применения: ${errorText(e)}`}finally{button.disabled=false}
+  try{const editor=device.meshClient.config.editor as AnyRecord;if(entry.kind==="radio")editor.setRadioSection(entry.key,value);else if(entry.kind==="module")editor.setModuleSection(entry.key,value);else if(entry.kind==="channel")editor.setChannel(value);else editor.setOwner(value);const committed=await editor.commit();if(committed.status==="error")throw committed.error;if(entry.kind==="radio")radioConfigs.set(entry.key!,value);else if(entry.kind==="module")moduleConfigs.set(entry.key!,value);else if(entry.kind==="channel")channels.set(entry.index!,value);else{ownerConfig=value;renderOwnIdentity()}settingsEditing=false;$("settings-state").textContent="Настройки применены. Если раздел требует перезагрузки, соединение восстановится автоматически.";refreshSettingsOptions()}catch(e){$("settings-state").textContent=`Ошибка применения: ${errorText(e)}`}finally{button.disabled=false}
 }
 
 async function loadArchive() {
@@ -481,8 +518,8 @@ async function connect(){
     const transport=await TransportHTTP.create(location.host,location.protocol==="https:");
     device=new MeshDevice(transport,Math.floor(Math.random()*0xffffffff));
     device.events.onDeviceStatus.subscribe(s=>statusPill(s===DeviceStatusEnum.DeviceConfigured?"плата подключена":"подключение…",s===DeviceStatusEnum.DeviceConfigured?"ok":"warn"));
-    device.events.onMyNodeInfo.subscribe(info=>{statusPill("плата подключена","ok");myNode=info.myNodeNum>>>0;addNode(myNode,{user:{longName:"BarbieNode"}});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()});
-    device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(selectedNode===num)updateDestination();if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);renderOwnIdentity();refreshSettingsOptions()}renderNodes();scheduleMap()}});
+    device.events.onMyNodeInfo.subscribe(info=>{statusPill("плата подключена","ok");myNode=info.myNodeNum>>>0;if(!nodes.get(myNode)?.user)addNode(myNode,{user:fallbackOwner});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()});
+    device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(selectedNode===num)updateDestination();if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);renderOwnIdentity();refreshSettingsOptions()}if(!initialNodeSync){scheduleNodeRender();scheduleNodeCacheSave()}}});
     device.events.onChannelPacket.subscribe(info=>{const c=info as AnyRecord;channels.set(Number(c.index),c);renderChannels();refreshSettingsOptions()});
     device.events.onConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){radioConfigs.set(key,value);defaultRadioConfigs.delete(key);refreshSettingsOptions()}});
     device.events.onModuleConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){moduleConfigs.set(key,value);defaultModuleConfigs.delete(key);refreshSettingsOptions()}});
@@ -491,12 +528,12 @@ async function connect(){
     device.events.onPositionPacket.subscribe(packet=>{const p=packet as AnyRecord;addNode(p.from,{position:p.data,lastHeard:Math.floor(Date.now()/1000)});if(selectedNode===p.from)setAction(`Позиция получена:\n${positionText(p.data)}`);renderNodes();scheduleMap()});
     device.events.onNeighborInfoPacket.subscribe(packet=>{const p=packet as AnyRecord,source=Number(p.data?.nodeId||p.from)>>>0;neighborInfos.set(source,p.data);localStorage.setItem("meshtastic-neighbors",JSON.stringify([...neighborInfos]));scheduleMap()});
     device.events.onTraceRoutePacket.subscribe(packet=>{const p=packet as AnyRecord;if(selectedNode===p.from){const route=(p.data?.route||[]).map((n:number,i:number)=>`${i+1}. ${nodeName(n)} (${short(hex(n))})`).join("\n");setAction(`Трассировка получена:\n${route||"Прямое соединение без промежуточных нод"}\n\nПолные данные:\n${json(p.data)}`)}});
-    await device.configure();
+    await device.configure();initialNodeSync=false;
     myNode=device.meshClient.myNodeNum>>>0;
-    if(myNode){addNode(myNode,{user:{longName:nodes.get(myNode)?.user?.longName||"BarbieNode"}});const owner=nodes.get(myNode)?.user;if(owner){ownerConfig=owner;device.meshClient.config.editor.setBaselineOwner(owner)}renderOwnIdentity();renderMessages();renderNodes();scheduleMap();refreshSettingsOptions()}
+    if(myNode){if(!nodes.get(myNode)?.user)addNode(myNode,{user:fallbackOwner});const owner=nodes.get(myNode)?.user;if(owner){ownerConfig=owner;device.meshClient.config.editor.setBaselineOwner(owner)}renderOwnIdentity();renderMessages();renderNodes();scheduleMap();refreshSettingsOptions();void saveNodeCache()}
     hydrateSettingsFromEditor();
     statusPill("плата подключена","ok");
-  }catch(e){statusPill("нет API платы","bad");$("send-result").textContent=`Подключение: ${errorText(e)}`}
+  }catch(e){initialNodeSync=false;statusPill("нет API платы","bad");$("send-result").textContent=`Подключение: ${errorText(e)}`}
 }
 
 async function sendMessage(event:SubmitEvent){
@@ -552,5 +589,5 @@ reserveComposerSpace();
 addEventListener("resize",()=>{drawAirtime();scheduleMap()});
 
 renderAir();drawAirtime();renderMap();
-void Promise.all([loadArchive(),loadStatus(),loadDualBootStatus(),loadNotificationStatus(),loadOwnLocation(),connect()]);
+void Promise.all([loadNodeCache(),loadArchive(),loadStatus(),loadDualBootStatus(),loadNotificationStatus(),loadOwnLocation(),connect()]);
 setInterval(loadArchive,30000);setInterval(loadStatus,30000);setInterval(loadNotificationStatus,30000);

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import json
 import os
+import threading
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError, URLError
@@ -15,6 +17,9 @@ WEB_ROOT = Path(os.environ.get("WEB_ROOT", "/opt/barbienode-web")).resolve()
 BIND_HOST = os.environ.get("BIND_HOST", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8082"))
 DEVICE_URL = os.environ.get("DEVICE_URL", "http://meshtastic.local").rstrip("/")
+NODE_CACHE_PATH = Path(os.environ.get("NODE_CACHE_PATH", "/var/lib/barbienode-web/node-cache.json"))
+NODE_CACHE_LOCK = threading.Lock()
+MAX_NODE_CACHE_BYTES = 4 * 1024 * 1024
 PROXY_PREFIXES = (
     "/api/",
     "/json/",
@@ -44,6 +49,42 @@ class SPAHandler(SimpleHTTPRequestHandler):
 
     def _is_device_request(self) -> bool:
         return urlsplit(self.path).path.startswith(PROXY_PREFIXES)
+
+    def _send_node_cache(self) -> None:
+        with NODE_CACHE_LOCK:
+            try:
+                body = NODE_CACHE_PATH.read_bytes()
+            except FileNotFoundError:
+                body = b'{"savedAt":0,"nodes":[]}'
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _save_node_cache(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        if length <= 0 or length > MAX_NODE_CACHE_BYTES:
+            self.send_error(413, "Invalid node cache size")
+            return
+        body = self.rfile.read(length)
+        try:
+            payload = json.loads(body)
+            if not isinstance(payload, dict) or not isinstance(payload.get("nodes"), list):
+                raise ValueError("nodes must be a list")
+            if len(payload["nodes"]) > 2000:
+                raise ValueError("too many nodes")
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            self.send_error(400, f"Invalid node cache: {error}")
+            return
+        encoded = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
+        NODE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        temporary = NODE_CACHE_PATH.with_suffix(".tmp")
+        with NODE_CACHE_LOCK:
+            temporary.write_bytes(encoded)
+            os.replace(temporary, NODE_CACHE_PATH)
+        self.send_response(204)
+        self.end_headers()
 
     def _proxy_device_request(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
@@ -83,6 +124,9 @@ class SPAHandler(SimpleHTTPRequestHandler):
             self.wfile.write(response_body)
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if urlsplit(self.path).path == "/node-cache.json":
+            self._send_node_cache()
+            return
         if urlsplit(self.path).path == "/reset-ui":
             body = b"""<!doctype html><meta charset=utf-8><title>Reset BarbieNode UI</title>
 <p>Resetting the obsolete browser cache...</p><script>
@@ -114,13 +158,16 @@ reset();
         super().do_GET()
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if urlsplit(self.path).path == "/node-cache.json":
+            self._save_node_cache()
+            return
         if self._is_device_request():
             self._proxy_device_request()
             return
         self.send_error(405)
 
     def do_PUT(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
-        if self._is_device_request():
+        if self._is_device_request() or urlsplit(self.path).path == "/node-cache.json":
             self._proxy_device_request()
             return
         self.send_error(405)

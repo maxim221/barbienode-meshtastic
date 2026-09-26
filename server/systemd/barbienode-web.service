@@ -10,6 +10,8 @@ ExecStart=/usr/bin/python3 /opt/barbienode-web/web_server.py
 EnvironmentFile=-/etc/barbienode/barbienode.env
 Environment=WEB_ROOT=/opt/barbienode-web
 Environment=PORT=8082
+Environment=NODE_CACHE_PATH=/var/lib/barbienode-web/node-cache.json
+StateDirectory=barbienode-web
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=yes

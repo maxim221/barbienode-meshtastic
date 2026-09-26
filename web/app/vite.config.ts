@@ -12,8 +12,8 @@ export default defineConfig({
       order: "post",
       handler(html) {
         return html
-          .replace('src="/app.js"', 'src="/app.js?v=20260926-node-identity-11"')
-          .replace('href="/style.css"', 'href="/style.css?v=20260926-node-identity-11"');
+          .replace('src="/app.js"', 'src="/app.js?v=20260926-node-cache-12"')
+          .replace('href="/style.css"', 'href="/style.css?v=20260926-node-cache-12"');
       },
     },
   }],
