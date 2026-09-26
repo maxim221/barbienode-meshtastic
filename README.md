@@ -22,7 +22,7 @@ flowchart LR
     P[Телефон] -->|домашний Wi-Fi| O[Orange Pi]
     O -->|HTTP proxy| E
     O -->|раз в минуту| A[(SQLite архив)]
-    P -. без роутера .->|BarbieNode-Portable| E
+    P -->|BarbieNode-Portable| E
 ```
 
 - Компактный русскоязычный интерфейс: сообщения, узлы, офлайн-карта,
