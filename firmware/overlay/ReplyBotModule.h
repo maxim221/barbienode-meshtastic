@@ -9,7 +9,13 @@
 
 // Low byte: broadcast-message channel bits. High byte: direct-message channel bits.
 uint16_t getNotificationUnreadState();
+uint32_t getNotificationTransmitCount();
+uint32_t getNotificationReceiveCount();
+bool getPingBotEnabled();
+bool setPingBotEnabled(bool enabled);
 void clearNotificationUnread(int8_t channel);
+void notifyNotificationTransmit();
+void notifyNotificationReceive();
 
 class ReplyBotModule : public SinglePortModule, private concurrency::OSThread
 {
@@ -18,7 +24,6 @@ class ReplyBotModule : public SinglePortModule, private concurrency::OSThread
     void setup() override;
     bool wantPacket(const meshtastic_MeshPacket *p) override;
     ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override;
-
   protected:
     int32_t runOnce() override;
 
@@ -37,6 +42,8 @@ class ReplyBotModule : public SinglePortModule, private concurrency::OSThread
 
     PersistentState state = {};
     bool heartbeatLit = false;
+    bool rainbowActive = false;
+    uint16_t rainbowHue = 0;
 
     bool isActive(uint32_t epoch) const;
     bool alreadyReplied(uint32_t sender) const;
@@ -48,6 +55,7 @@ class ReplyBotModule : public SinglePortModule, private concurrency::OSThread
     bool sendText(uint32_t dest, uint8_t channel, const char *text, bool wantAck, const char *event, uint32_t epoch);
     void showHeartbeat();
     void hideHeartbeat();
+    void showPortableRainbow();
 };
 
 #endif

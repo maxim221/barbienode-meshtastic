@@ -101,12 +101,24 @@
       </section>
 
       <section id="status" class="view">
-        <div id="status-grid" class="status-grid"><p class="muted">Загрузка…</p></div>
+        <div id="status-grid" class="status-grid" aria-live="polite"><p class="muted">Загрузка…</p></div>
         <div class="chart-card"><strong>Загрузка эфира за текущую сессию</strong><canvas id="air-chart"></canvas><div class="legend"><span>■ канал занят</span><span>■ передача нашей ноды</span></div></div>
         <details><summary>Что работает без интернета?</summary><p>Эта страница, журнал и обмен с платой работают внутри вашей Wi‑Fi сети. Сами сообщения уходят и приходят по LoRa. Интернет нужен только для внешних карт.</p></details>
       </section>
 
       <section id="settings" class="view">
+        <article id="settings-portable-home" class="card settings-portable-home" hidden>
+          <strong>Портативная точка доступа активна</strong>
+          <p>Плата не подключена к домашней сети. Нажмите кнопку, чтобы выключить BarbieNode-Portable и подключиться к сохранённой домашней Wi‑Fi сети.</p>
+          <button id="settings-boot-home" type="button">Подключиться к домашней сети</button>
+          <p id="settings-home-result" class="muted"></p>
+        </article>
+        <article class="card settings-pingbot">
+          <strong>Ping-бот</strong>
+          <p>Отвечает только на точный текст «Ping» в канале Ping. Ограничения частоты ответов сохраняются.</p>
+          <div class="actions"><span id="pingbot-state" class="pill">Проверяю…</span><button id="pingbot-toggle" type="button" class="secondary" disabled>Изменить</button></div>
+          <p id="pingbot-result" class="muted"></p>
+        </article>
         <article class="card settings-warning">
           <strong>Расширенный ручной редактор</strong>
           <p>Здесь доступны все системные разделы, модули, каналы и данные владельца, которые передала плата. Ошибка в Radio, Region, Wi‑Fi или Security может перезагрузить устройство либо разорвать соединение.</p>

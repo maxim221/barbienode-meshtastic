@@ -21,12 +21,20 @@ root = Path(sys.argv[1]).resolve()
 source = root / "src"
 handler = source / "mesh/http/ContentHandler.cpp"
 wifi_client = source / "mesh/wifi/WiFiAPClient.cpp"
+radio_interface = source / "mesh/RadioLibInterface.cpp"
 if not handler.is_file():
     raise SystemExit(f"Meshtastic ContentHandler.cpp not found under {root}")
 if not wifi_client.is_file():
     raise SystemExit(f"Meshtastic WiFiAPClient.cpp not found under {root}")
+if not radio_interface.is_file():
+    raise SystemExit(f"Meshtastic RadioLibInterface.cpp not found under {root}")
 
-overlay = Path(__file__).resolve().parent / "overlay"
+bundle = Path(__file__).resolve().parent
+overlay = bundle / "overlay"
+variant = root / "variants/esp32s3/diy/e22-s3-n16r8"
+variant.mkdir(parents=True, exist_ok=True)
+for variant_file in ("platformio.ini", "variant.h", "pins_arduino.h"):
+    copy2(bundle / variant_file, variant / variant_file)
 copy2(overlay / "DualBootHandler.h", source / "DualBootHandler.h")
 copy2(overlay / "DualBootHandler.cpp", source / "DualBootHandler.cpp")
 copy2(overlay / "ReplyBotModule.h", source / "modules/ReplyBotModule.h")
@@ -49,6 +57,26 @@ if 'nodeDualBootUpdateRNode' not in text:
             f'    {server}->registerNode(nodeNotificationStatus);\n'
             f'    {server}->registerNode(nodeNotificationRead);',
             f'    {server}->registerNode(nodeDualBootHome);',
+        )
+# Add Ping-bot routes to a checkout that already has the previous updater
+# routes. Doing this before the fresh-install anchors keeps reruns idempotent.
+if 'nodeDualBootUpdateRNode' in text and 'nodePingBotStatus' not in text:
+    text = text.replace(
+        '    ResourceNode *nodeNotificationRead = new ResourceNode("/notifications/read", "POST", &handleNotificationRead);\n'
+        '    ResourceNode *nodeDualBootUpdateRNode = new ResourceNode("/dualboot/update/rnode", "POST", &handleDualBootUpdateRNode);',
+        '    ResourceNode *nodeNotificationRead = new ResourceNode("/notifications/read", "POST", &handleNotificationRead);\n'
+        '    ResourceNode *nodePingBotStatus = new ResourceNode("/pingbot/status", "GET", &handlePingBotStatus);\n'
+        '    ResourceNode *nodePingBotToggle = new ResourceNode("/pingbot/toggle", "POST", &handlePingBotToggle);\n'
+        '    ResourceNode *nodeDualBootUpdateRNode = new ResourceNode("/dualboot/update/rnode", "POST", &handleDualBootUpdateRNode);',
+    )
+    for server in ('secureServer', 'insecureServer'):
+        text = text.replace(
+            f'    {server}->registerNode(nodeNotificationRead);\n'
+            f'    {server}->registerNode(nodeDualBootUpdateRNode);',
+            f'    {server}->registerNode(nodeNotificationRead);\n'
+            f'    {server}->registerNode(nodePingBotStatus);\n'
+            f'    {server}->registerNode(nodePingBotToggle);\n'
+            f'    {server}->registerNode(nodeDualBootUpdateRNode);',
         )
 # Upgrade a checkout that already has the earlier two-mode overlay without
 # duplicating its nodes. Fresh and already-upgraded checkouts skip this block.
@@ -91,6 +119,8 @@ text = replace_once(
     '    ResourceNode *nodeDualBootHome = new ResourceNode("/dualboot/home", "POST", &handleDualBootHomeWiFi);\n'
     '    ResourceNode *nodeNotificationStatus = new ResourceNode("/notifications/status", "GET", &handleNotificationStatus);\n'
     '    ResourceNode *nodeNotificationRead = new ResourceNode("/notifications/read", "POST", &handleNotificationRead);\n'
+    '    ResourceNode *nodePingBotStatus = new ResourceNode("/pingbot/status", "GET", &handlePingBotStatus);\n'
+    '    ResourceNode *nodePingBotToggle = new ResourceNode("/pingbot/toggle", "POST", &handlePingBotToggle);\n'
     '    ResourceNode *nodeDualBootUpdateRNode = new ResourceNode("/dualboot/update/rnode", "POST", &handleDualBootUpdateRNode);',
 )
 text = replace_once(
@@ -108,6 +138,8 @@ text = replace_once(
     '    secureServer->registerNode(nodeDualBootHome);\n'
     '    secureServer->registerNode(nodeNotificationStatus);\n'
     '    secureServer->registerNode(nodeNotificationRead);\n'
+    '    secureServer->registerNode(nodePingBotStatus);\n'
+    '    secureServer->registerNode(nodePingBotToggle);\n'
     '    secureServer->registerNode(nodeDualBootUpdateRNode);',
 )
 text = replace_once(
@@ -125,6 +157,8 @@ text = replace_once(
     '    insecureServer->registerNode(nodeDualBootHome);\n'
     '    insecureServer->registerNode(nodeNotificationStatus);\n'
     '    insecureServer->registerNode(nodeNotificationRead);\n'
+    '    insecureServer->registerNode(nodePingBotStatus);\n'
+    '    insecureServer->registerNode(nodePingBotToggle);\n'
     '    insecureServer->registerNode(nodeDualBootUpdateRNode);',
 )
 handler.write_text(text)
@@ -212,4 +246,37 @@ wifi_text = replace_once(
     '#endif',
 )
 wifi_client.write_text(wifi_text)
+
+radio_text = radio_interface.read_text()
+radio_text = replace_once(
+    radio_text,
+    '#include "RadioTxHook.h"',
+    '#include "RadioTxHook.h"\n'
+    '#if defined(E22_S3_N16R8) && !MESHTASTIC_EXCLUDE_REPLYBOT\n'
+    '#include "modules/ReplyBotModule.h"\n'
+    '#endif',
+)
+radio_text = replace_once(
+    radio_text,
+    '                return;\n'
+    '            }\n\n'
+    '            // Note: we deliver _all_ packets to our router',
+    '                return;\n'
+    '            }\n'
+    '#if defined(E22_S3_N16R8) && !MESHTASTIC_EXCLUDE_REPLYBOT\n'
+    '            notifyNotificationReceive();\n'
+    '#endif\n\n'
+    '            // Note: we deliver _all_ packets to our router',
+)
+radio_text = replace_once(
+    radio_text,
+    '            lastTxStart = Time::getMillis();\n'
+    '            printPacket("Started Tx", txp);',
+    '            lastTxStart = Time::getMillis();\n'
+    '            printPacket("Started Tx", txp);\n'
+    '#if defined(E22_S3_N16R8) && !MESHTASTIC_EXCLUDE_REPLYBOT\n'
+    '            notifyNotificationTransmit();\n'
+    '#endif',
+)
+radio_interface.write_text(radio_text)
 print(f"Dual-boot handlers and autonomous bots installed in {root}")

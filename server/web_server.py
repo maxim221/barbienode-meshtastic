@@ -26,6 +26,7 @@ PROXY_PREFIXES = (
     "/dualboot/",
     "/nightbot",
     "/notifications/",
+    "/pingbot/",
     "/upload",
 )
 

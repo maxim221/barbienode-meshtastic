@@ -2,6 +2,7 @@
 #if !MESHTASTIC_EXCLUDE_REPLYBOT
 
 #include "ReplyBotModule.h"
+#include "DualBootHandler.h"
 
 #include "Channels.h"
 #include "FSCommon.h"
@@ -32,6 +33,9 @@ constexpr bool ENABLE_SCHEDULED_BEACON = false;
 constexpr uint32_t THREAD_INTERVAL_MS = 5000;
 constexpr uint32_t HEARTBEAT_PULSE_MS = 250;
 constexpr uint32_t HEARTBEAT_REST_MS = 20 * 1000 - HEARTBEAT_PULSE_MS;
+constexpr uint32_t PORTABLE_RAINBOW_STEP_MS = 120;
+constexpr uint16_t PORTABLE_RAINBOW_HUE_STEP = 768;
+constexpr uint8_t PORTABLE_RAINBOW_VALUE = 20;
 constexpr size_t MAX_LOG_BYTES = 256 * 1024;
 
 constexpr const char *STATE_PATH = "/nightbot.state";
@@ -46,9 +50,15 @@ constexpr uint32_t PING_SENDER_COOLDOWN_MS = 5 * 60 * 1000;
 constexpr uint8_t PING_COOLDOWN_SLOTS = 16;
 constexpr const char *NOTIFICATION_PREF_NAMESPACE = "BarbieNotify";
 constexpr const char *NOTIFICATION_PREF_KEY = "unread";
+constexpr const char *PING_BOT_PREF_KEY = "pingbot";
+constexpr const char *PING_BOT_STATE_PATH = "/pingbot.state";
 constexpr uint8_t NOTIFICATION_LED_PIN = 48;
 
 std::atomic<uint16_t> notificationUnread{0};
+std::atomic<uint32_t> notificationTransmitCount{0};
+std::atomic<uint32_t> notificationReceiveCount{0};
+std::atomic<bool> pingBotEnabled{true};
+std::atomic<bool> pingBotStateLoaded{false};
 Adafruit_NeoPixel notificationPixel(1, NOTIFICATION_LED_PIN, NEO_GRB + NEO_KHZ800);
 
 struct PingCooldownEntry {
@@ -72,10 +82,26 @@ void persistNotificationUnread(uint16_t value)
 void loadNotificationUnread()
 {
     Preferences prefs;
-    if (!prefs.begin(NOTIFICATION_PREF_NAMESPACE, true))
-        return;
-    notificationUnread.store(prefs.getUShort(NOTIFICATION_PREF_KEY, 0));
-    prefs.end();
+    if (prefs.begin(NOTIFICATION_PREF_NAMESPACE, true)) {
+        notificationUnread.store(prefs.getUShort(NOTIFICATION_PREF_KEY, 0));
+        pingBotEnabled.store(prefs.getBool(PING_BOT_PREF_KEY, true));
+        pingBotStateLoaded.store(true);
+        prefs.end();
+    }
+#ifdef FSCom
+    concurrency::LockGuard guard(spiLock);
+    if (FSCom.exists(PING_BOT_STATE_PATH)) {
+        File file = FSCom.open(PING_BOT_STATE_PATH, FILE_O_READ);
+        if (file) {
+            const int stored = file.read();
+            file.close();
+            if (stored == 0 || stored == 1) {
+                pingBotEnabled.store(stored == 1);
+                pingBotStateLoaded.store(true);
+            }
+        }
+    }
+#endif
 }
 
 void markNotificationUnread(uint8_t channel, bool direct)
@@ -160,6 +186,40 @@ void writeJsonString(File &file, const uint8_t *value, size_t length)
 } // namespace
 
 uint16_t getNotificationUnreadState() { return notificationUnread.load(); }
+uint32_t getNotificationTransmitCount() { return notificationTransmitCount.load(); }
+uint32_t getNotificationReceiveCount() { return notificationReceiveCount.load(); }
+bool getPingBotEnabled()
+{
+    // Module setup can run before Preferences/NVS is ready on some boots.
+    // Retry lazily so a persisted false value is never replaced by the default.
+    if (!pingBotStateLoaded.load())
+        loadNotificationUnread();
+    return pingBotEnabled.load();
+}
+
+bool setPingBotEnabled(bool enabled)
+{
+    Preferences prefs;
+    if (!prefs.begin(NOTIFICATION_PREF_NAMESPACE, false))
+        return false;
+    const size_t written = prefs.putBool(PING_BOT_PREF_KEY, enabled);
+    prefs.end();
+    if (written == 0)
+        return false;
+#ifdef FSCom
+    SafeFile file(PING_BOT_STATE_PATH, true);
+    {
+        concurrency::LockGuard guard(spiLock);
+        if (file.write(enabled ? 1 : 0) != 1)
+            return false;
+    }
+    if (!file.close())
+        return false;
+#endif
+    pingBotEnabled.store(enabled);
+    pingBotStateLoaded.store(true);
+    return true;
+}
 
 void clearNotificationUnread(int8_t channel)
 {
@@ -175,6 +235,13 @@ void clearNotificationUnread(int8_t channel)
     if (before != after)
         persistNotificationUnread(after);
 }
+
+void notifyNotificationTransmit()
+{
+    notificationTransmitCount.fetch_add(1);
+}
+
+void notifyNotificationReceive() { notificationReceiveCount.fetch_add(1); }
 
 ReplyBotModule::ReplyBotModule()
     : SinglePortModule("nightbot", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("NightBot", THREAD_INTERVAL_MS)
@@ -346,7 +413,8 @@ ProcessMessage ReplyBotModule::handleReceived(const meshtastic_MeshPacket &mp)
     // an exact broadcast "Ping" on that named channel. The strict match and
     // rate limits prevent bot-to-bot loops and airtime floods.
     const bool isPingChannel = isBroadcast(mp.to) && strcasecmp(channels.getName(mp.channel), PING_CHANNEL_NAME) == 0;
-    if (isPingChannel && isExactPing(mp.decoded.payload.bytes, mp.decoded.payload.size) && config.lora.tx_enabled &&
+    if (getPingBotEnabled() && isPingChannel && isExactPing(mp.decoded.payload.bytes, mp.decoded.payload.size) &&
+        config.lora.tx_enabled &&
         !pingRateLimited(mp.from)) {
         char reply[128];
         char hopsText[8];
@@ -399,8 +467,28 @@ void ReplyBotModule::hideHeartbeat()
     heartbeatLit = false;
 }
 
+void ReplyBotModule::showPortableRainbow()
+{
+    const uint32_t color = notificationPixel.gamma32(
+        notificationPixel.ColorHSV(rainbowHue, 255, PORTABLE_RAINBOW_VALUE));
+    notificationPixel.setPixelColor(0, color);
+    notificationPixel.show();
+    rainbowHue += PORTABLE_RAINBOW_HUE_STEP;
+    rainbowActive = true;
+    heartbeatLit = false;
+}
+
 int32_t ReplyBotModule::runOnce()
 {
+    if (isDualBootPortableAPUnattended()) {
+        showPortableRainbow();
+        return PORTABLE_RAINBOW_STEP_MS;
+    }
+    if (rainbowActive) {
+        rainbowActive = false;
+        notificationPixel.clear();
+        notificationPixel.show();
+    }
     if (heartbeatLit) {
         hideHeartbeat();
         return HEARTBEAT_REST_MS;

@@ -12,5 +12,8 @@ void handleDualBootHomeWiFi(httpsserver::HTTPRequest *req, httpsserver::HTTPResp
 void handleDualBootUpdateRNode(httpsserver::HTTPRequest *req, httpsserver::HTTPResponse *res);
 void handleNotificationStatus(httpsserver::HTTPRequest *req, httpsserver::HTTPResponse *res);
 void handleNotificationRead(httpsserver::HTTPRequest *req, httpsserver::HTTPResponse *res);
+void handlePingBotStatus(httpsserver::HTTPRequest *req, httpsserver::HTTPResponse *res);
+void handlePingBotToggle(httpsserver::HTTPRequest *req, httpsserver::HTTPResponse *res);
 bool startDualBootPortableAP(bool automaticFallback = false);
 bool isDualBootPortableAPActive();
+bool isDualBootPortableAPUnattended();

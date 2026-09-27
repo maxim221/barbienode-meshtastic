@@ -245,8 +245,10 @@ void handleNotificationStatus(HTTPRequest *, HTTPResponse *res)
     const char *color = general && direct ? "white" : direct ? "red" : general ? "blue" : "green";
     res->setHeader("Content-Type", "application/json");
     res->setHeader("Cache-Control", "no-store");
-    res->printf("{\"general_channels\":%u,\"direct_channels\":%u,\"color\":\"%s\",\"interval_seconds\":20}",
-                general, direct, color);
+    res->printf("{\"general_channels\":%u,\"direct_channels\":%u,\"color\":\"%s\",\"interval_seconds\":20,"
+                "\"rx_packets\":%lu,\"tx_packets\":%lu}",
+                general, direct, color, static_cast<unsigned long>(getNotificationReceiveCount()),
+                static_cast<unsigned long>(getNotificationTransmitCount()));
 }
 
 void handleNotificationRead(HTTPRequest *req, HTTPResponse *res)
@@ -264,6 +266,35 @@ void handleNotificationRead(HTTPRequest *req, HTTPResponse *res)
         return;
     }
     textResponse(res, 200, "Прочитано");
+}
+
+void handlePingBotStatus(HTTPRequest *, HTTPResponse *res)
+{
+    res->setHeader("Content-Type", "application/json");
+    res->setHeader("Cache-Control", "no-store");
+    res->printf("{\"enabled\":%s}", getPingBotEnabled() ? "true" : "false");
+}
+
+void handlePingBotToggle(HTTPRequest *req, HTTPResponse *res)
+{
+    char value[8] = {};
+    size_t count = req->readBytes(reinterpret_cast<uint8_t *>(value), sizeof(value) - 1);
+    while (count > 0 && (value[count - 1] == '\r' || value[count - 1] == '\n' || value[count - 1] == ' '))
+        value[--count] = '\0';
+    bool enabled;
+    if (strcmp(value, "true") == 0 || strcmp(value, "1") == 0 || strcmp(value, "on") == 0) {
+        enabled = true;
+    } else if (strcmp(value, "false") == 0 || strcmp(value, "0") == 0 || strcmp(value, "off") == 0) {
+        enabled = false;
+    } else {
+        textResponse(res, 400, "Укажите true или false");
+        return;
+    }
+    if (!setPingBotEnabled(enabled)) {
+        textResponse(res, 500, "Не удалось сохранить состояние Ping-бота");
+        return;
+    }
+    textResponse(res, 200, enabled ? "Ping-бот включён" : "Ping-бот выключен");
 }
 
 bool startDualBootPortableAP(bool automaticFallback)
@@ -292,6 +323,11 @@ bool startDualBootPortableAP(bool automaticFallback)
 bool isDualBootPortableAPActive()
 {
     return portableAPActive;
+}
+
+bool isDualBootPortableAPUnattended()
+{
+    return portableAPActive && WiFi.softAPgetStationNum() == 0;
 }
 
 void handleDualBootPortableAP(HTTPRequest *req, HTTPResponse *res)
@@ -389,7 +425,10 @@ void handleDualBootHomeWiFi(httpsserver::HTTPRequest *, httpsserver::HTTPRespons
 void handleDualBootUpdateRNode(httpsserver::HTTPRequest *, httpsserver::HTTPResponse *) {}
 void handleNotificationStatus(httpsserver::HTTPRequest *, httpsserver::HTTPResponse *) {}
 void handleNotificationRead(httpsserver::HTTPRequest *, httpsserver::HTTPResponse *) {}
+void handlePingBotStatus(httpsserver::HTTPRequest *, httpsserver::HTTPResponse *) {}
+void handlePingBotToggle(httpsserver::HTTPRequest *, httpsserver::HTTPResponse *) {}
 bool startDualBootPortableAP(bool) { return false; }
 bool isDualBootPortableAPActive() { return false; }
+bool isDualBootPortableAPUnattended() { return false; }
 
 #endif

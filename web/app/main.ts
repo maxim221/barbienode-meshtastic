@@ -35,6 +35,8 @@ let initialNodeSync=true;
 let ownFixedPosition: {lat:number;lon:number} | undefined;
 let ownerConfig: AnyRecord | undefined;
 let settingsEditing=false;
+let connectionConfigured=false;
+let connectionWarningTimer:number|undefined;
 const fallbackOwner={longName:"BarbieNode 💅",shortName:"db8c"};
 const mapRadii=[2.5,5,10,20,40,80];
 let mapRadiusIndex=3;
@@ -69,6 +71,20 @@ const errorText = (e:unknown) => {
   return e instanceof Error ? e.message : typeof e === "string" ? e : json(e);
 };
 const statusPill = (text:string, cls:string) => { const el=$("connection"); el.textContent=text; el.className=`pill ${cls}`; };
+function clearConnectionWarning(){if(connectionWarningTimer!==undefined){window.clearTimeout(connectionWarningTimer);connectionWarningTimer=undefined}}
+function markConnectionConfigured(){connectionConfigured=true;clearConnectionWarning();statusPill("плата подключена","ok")}
+function updateConnectionStatus(status:DeviceStatusEnum){
+  if(status===DeviceStatusEnum.DeviceConfigured){markConnectionConfigured();return}
+  if(status===DeviceStatusEnum.DeviceConnected){clearConnectionWarning();statusPill(connectionConfigured?"плата подключена":"подключение…",connectionConfigured?"ok":"warn");return}
+  if(status===DeviceStatusEnum.DeviceRestarting){connectionConfigured=false;clearConnectionWarning();statusPill("плата перезагружается…","warn");return}
+  if(status===DeviceStatusEnum.DeviceError){connectionConfigured=false;clearConnectionWarning();statusPill("ошибка подключения","bad");return}
+  if(status===DeviceStatusEnum.DeviceDisconnected){
+    clearConnectionWarning();
+    connectionWarningTimer=window.setTimeout(()=>statusPill(connectionConfigured?"связь с платой потеряна":"нет подключения к плате","bad"),15000);
+    return;
+  }
+  if(!connectionConfigured)statusPill("подключение…","warn");
+}
 const fallbackChannelNames:Record<number,string>={0:"Первичный",1:"Приватный",2:"Район",3:"Ping"};
 const channelName=(index:number)=>channels.get(index)?.settings?.name||fallbackChannelNames[index]||`Канал ${index}`;
 const messageKey=(m:Message)=>`${m.ts}|${m.from}|${m.to}|${m.channel}|${m.text}`;
@@ -339,9 +355,25 @@ function renderMessages() {
 }
 
 function nodeSearchText(n:AnyRecord) { return `${n.num} ${hex(n.num)} ${short(hex(n.num))} ${n.user?.longName||""} ${n.user?.shortName||""}`.toLowerCase(); }
+function nodeActivityCounts(){
+  let active=0,recent=0;
+  for(const n of nodes.values()){
+    if(!n.lastHeard)continue;
+    const state=activity(n.lastHeard).cls;
+    if(state==="activity-live")active++;
+    else if(state==="activity-recent")recent++;
+  }
+  return {active,recent};
+}
+function updateNodeActivityCounts(){
+  const {active,recent}=nodeActivityCounts(),activeElement=document.getElementById("node-active-count"),recentElement=document.getElementById("node-recent-count");
+  if(activeElement)activeElement.textContent=String(active);
+  if(recentElement)recentElement.textContent=String(recent);
+}
 function renderNodes() {
   const q=($("node-search") as HTMLInputElement).value.trim().toLowerCase().replace(/^0x/,"");
   const list=$("node-list"); list.replaceChildren();
+  updateNodeActivityCounts();
   const values=[...nodes.values()].filter(n=>!q||nodeSearchText(n).includes(q)).sort((a,b)=>(b.lastHeard||0)-(a.lastHeard||0));
   $("node-count").textContent=`(${nodes.size})`;
   for(const n of values) {
@@ -423,23 +455,49 @@ async function traceRoute(num:number){if(!device)return setAction("Плата е
 
 async function loadStatus(){
   try{
-    const r=await fetchJson("/json/report"),d=r.data||r,channel=Number(d.airtime?.channel_utilization)||0,tx=Number(d.airtime?.utilization_tx)||0;
-    const metrics=[["Wi‑Fi",`${d.wifi?.rssi??"—"} dBm`],["LoRa",`${d.radio?.frequency?.toFixed?.(3)??"—"} MHz`],["Эфир занят",`${channel.toFixed(1)}%`],["Передача",`${tx.toFixed(2)}%`],["Работает",`${Math.floor((d.airtime?.seconds_since_boot||0)/3600)} ч`],["Архив свободно",`${Math.round((d.memory?.fs_free||0)/1024)} КБ`]];
-    const grid=$("status-grid");grid.replaceChildren(...metrics.map(([a,b])=>{const e=document.createElement("div"),label=document.createElement("span"),value=document.createElement("b");e.className="metric";label.textContent=String(a);value.textContent=String(b);e.append(label,value);return e}));
+    const [r,counters]=await Promise.all([fetchJson("/json/report"),fetchJson("/notifications/status").catch(()=>({}))]),d=r.data||r,channel=Number(d.airtime?.channel_utilization)||0,tx=Number(d.airtime?.utilization_tx)||0;
+    const counts=nodeActivityCounts(),metrics:Array<[string,string,string?,string?,string?]>=[
+      ["Wi‑Fi",`${d.wifi?.rssi??"—"} dBm`],["LoRa",`${d.radio?.frequency?.toFixed?.(3)??"—"} MHz`],["Эфир занят",`${channel.toFixed(1)}%`],["Передача",`${tx.toFixed(2)}%`],
+      ["Работает",`${Math.floor((d.airtime?.seconds_since_boot||0)/3600)} ч`],["Архив свободно",`${Math.round((d.memory?.fs_free||0)/1024)} КБ`],
+      ["Принято пакетов",counters.rx_packets===undefined?"—":String(counters.rx_packets),undefined,undefined,"Успешно принятые LoRa-пакеты с момента загрузки платы"],
+      ["Отправлено пакетов",counters.tx_packets===undefined?"—":String(counters.tx_packets),undefined,undefined,"Фактически начатые LoRa-передачи с момента загрузки, включая ретрансляции"],
+      ["Активные ноды",String(counts.active),"node-active-count","node-metric-active","Слышали менее 15 минут назад"],
+      ["Недавние ноды",String(counts.recent),"node-recent-count","node-metric-recent","Слышали от 15 минут до 2 часов назад"]
+    ];
+    const grid=$("status-grid");grid.replaceChildren(...metrics.map(([a,b,id,cls,title])=>{const e=document.createElement("div"),label=document.createElement("span"),value=document.createElement("b");e.className=`metric${cls?` ${cls}`:""}`;if(title)e.title=title;label.textContent=a;value.textContent=b;if(id)value.id=id;e.append(label,value);return e}));
     const last=airtime.at(-1);if(!last||Date.now()/1000-last.ts>20){airtime.push({ts:Math.floor(Date.now()/1000),channel,tx});airtime=airtime.slice(-120);localStorage.setItem("meshtastic-airtime",JSON.stringify(airtime))}drawAirtime();
   }catch(e){$("status-grid").textContent=`Нет данных: ${errorText(e)}`}
 }
 
+let pingBotEnabled=false;
+async function loadPingBotStatus(){
+  const state=$("pingbot-state"),button=$<HTMLButtonElement>("pingbot-toggle");
+  try{
+    const status=await fetchJson("/pingbot/status");pingBotEnabled=Boolean(status.enabled);
+    state.textContent=pingBotEnabled?"Включён":"Выключен";state.className="pill "+(pingBotEnabled?"ok":"warn");
+    button.textContent=pingBotEnabled?"Выключить":"Включить";button.className=pingBotEnabled?"danger":"";button.disabled=false;
+  }catch(e){state.textContent="Недоступно";state.className="pill bad";button.disabled=true;$("pingbot-result").textContent="Требуется новая прошивка: "+errorText(e)}
+}
+async function togglePingBot(){
+  const button=$<HTMLButtonElement>("pingbot-toggle"),result=$("pingbot-result"),next=!pingBotEnabled;
+  button.disabled=true;result.textContent=next?"Включаю…":"Выключаю…";
+  try{
+    const response=await fetch("/pingbot/toggle",{method:"POST",headers:{"Content-Type":"text/plain"},body:String(next)}),message=await response.text();
+    if(!response.ok)throw new Error(message||String(response.status));
+    result.textContent=message;await loadPingBotStatus();
+  }catch(e){result.textContent="Ошибка: "+errorText(e);button.disabled=false}
+}
+
 async function loadDualBootStatus(){
-  const box=$("dualboot-status"),button=$<HTMLButtonElement>("boot-rnode"),portable=$<HTMLElement>("portable-controls"),home=$<HTMLButtonElement>("boot-home");
+  const box=$("dualboot-status"),button=$<HTMLButtonElement>("boot-rnode"),portable=$<HTMLElement>("portable-controls"),home=$<HTMLButtonElement>("boot-home"),settingsHome=$<HTMLElement>("settings-portable-home");
   try{
     const status=await fetchJson("/dualboot/status");
     if(status.portable_ap){
       box.textContent=`Портативный Meshtastic AP включён: ${status.portable_ssid} · ${status.portable_ip}`;
-      portable.hidden=true;home.hidden=false;
+      portable.hidden=true;home.hidden=false;settingsHome.hidden=false;
     }else{
       box.textContent="Meshtastic подключён к домашней Wi‑Fi сети.";
-      portable.hidden=false;home.hidden=true;
+      portable.hidden=false;home.hidden=true;settingsHome.hidden=true;
     }
     if(status.rnode_installed){
       box.textContent+=` RNode готов: ${status.version||"образ найден"}, раздел ${status.partition||"app1"}.`;
@@ -449,6 +507,7 @@ async function loadDualBootStatus(){
       box.className="result muted";button.disabled=true;
     }
   }catch(e){
+    settingsHome.hidden=true;
     box.textContent=`Эта версия Meshtastic ещё не поддерживает dual‑boot: ${errorText(e)}`;
     box.className="result muted";button.disabled=true;
   }
@@ -469,12 +528,12 @@ async function bootPortable(){
 
 async function bootHome(){
   if(!confirm("Отключить портативную точку и вернуться в сохранённую домашнюю Wi‑Fi сеть?"))return;
-  const button=$<HTMLButtonElement>("boot-home"),result=$("dualboot-result");button.disabled=true;result.textContent="Возвращаю домашний Wi‑Fi…";
+  const buttons=[$<HTMLButtonElement>("boot-home"),$<HTMLButtonElement>("settings-boot-home")],results=[$("dualboot-result"),$("settings-home-result")];buttons.forEach(button=>button.disabled=true);results.forEach(result=>result.textContent="Возвращаю домашний Wi‑Fi…");
   try{
     const response=await fetch("/dualboot/home",{method:"POST"}),text=await response.text();
     if(!response.ok)throw new Error(text||`${response.status}`);
-    result.textContent=text;
-  }catch(e){result.textContent=`Ошибка: ${errorText(e)}`;button.disabled=false}
+    results.forEach(result=>result.textContent=text);
+  }catch(e){results.forEach(result=>result.textContent=`Ошибка: ${errorText(e)}`);buttons.forEach(button=>button.disabled=false)}
 }
 
 async function bootRNode(){
@@ -517,8 +576,8 @@ async function connect(){
   try{
     const transport=await TransportHTTP.create(location.host,location.protocol==="https:");
     device=new MeshDevice(transport,Math.floor(Math.random()*0xffffffff));
-    device.events.onDeviceStatus.subscribe(s=>statusPill(s===DeviceStatusEnum.DeviceConfigured?"плата подключена":"подключение…",s===DeviceStatusEnum.DeviceConfigured?"ok":"warn"));
-    device.events.onMyNodeInfo.subscribe(info=>{statusPill("плата подключена","ok");myNode=info.myNodeNum>>>0;if(!nodes.get(myNode)?.user)addNode(myNode,{user:fallbackOwner});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()});
+    device.events.onDeviceStatus.subscribe(updateConnectionStatus);
+    device.events.onMyNodeInfo.subscribe(info=>{markConnectionConfigured();myNode=info.myNodeNum>>>0;if(!nodes.get(myNode)?.user)addNode(myNode,{user:fallbackOwner});renderOwnIdentity();renderMessages();renderNodes();scheduleMap()});
     device.events.onNodeInfoPacket.subscribe(info=>{const n=info as AnyRecord;const num=(n.num??n.nodeNum)>>>0;if(num){addNode(num,n);if(selectedNode===num)updateDestination();if(isOwnNode(num)&&n.user){ownerConfig=n.user;device!.meshClient.config.editor.setBaselineOwner(n.user);renderOwnIdentity();refreshSettingsOptions()}if(!initialNodeSync){scheduleNodeRender();scheduleNodeCacheSave()}}});
     device.events.onChannelPacket.subscribe(info=>{const c=info as AnyRecord;channels.set(Number(c.index),c);renderChannels();refreshSettingsOptions()});
     device.events.onConfigPacket.subscribe(info=>{const c=info as AnyRecord,key=c.payloadVariant?.case,value=c.payloadVariant?.value;if(key&&value){radioConfigs.set(key,value);defaultRadioConfigs.delete(key);refreshSettingsOptions()}});
@@ -532,8 +591,8 @@ async function connect(){
     myNode=device.meshClient.myNodeNum>>>0;
     if(myNode){if(!nodes.get(myNode)?.user)addNode(myNode,{user:fallbackOwner});const owner=nodes.get(myNode)?.user;if(owner){ownerConfig=owner;device.meshClient.config.editor.setBaselineOwner(owner)}renderOwnIdentity();renderMessages();renderNodes();scheduleMap();refreshSettingsOptions();void saveNodeCache()}
     hydrateSettingsFromEditor();
-    statusPill("плата подключена","ok");
-  }catch(e){initialNodeSync=false;statusPill("нет API платы","bad");$("send-result").textContent=`Подключение: ${errorText(e)}`}
+    markConnectionConfigured();
+  }catch(e){initialNodeSync=false;connectionConfigured=false;clearConnectionWarning();statusPill("нет API платы","bad");$("send-result").textContent=`Подключение: ${errorText(e)}`}
 }
 
 async function sendMessage(event:SubmitEvent){
@@ -550,7 +609,7 @@ async function sendMessage(event:SubmitEvent){
   }catch(e){result.className="send-feedback bad";result.textContent=sendFailureText(e,selectedNode)}
 }
 
-document.querySelectorAll<HTMLButtonElement>(".tab").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll(".tab,.view").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab!).classList.add("active");if(b.dataset.tab==="messages"){if(selectedMessageChannel==="all")unreadChannels.clear();else unreadChannels.delete(selectedMessageChannel);updateUnreadIndicators();void acknowledgeViewedMessages()}if(b.dataset.tab==="status")requestAnimationFrame(drawAirtime);if(b.dataset.tab==="map")scheduleMap();if(b.dataset.tab==="settings")refreshSettingsOptions()}));
+document.querySelectorAll<HTMLButtonElement>(".tab").forEach(b=>b.addEventListener("click",()=>{document.querySelectorAll(".tab,.view").forEach(x=>x.classList.remove("active"));b.classList.add("active");$(b.dataset.tab!).classList.add("active");if(b.dataset.tab==="messages"){if(selectedMessageChannel==="all")unreadChannels.clear();else unreadChannels.delete(selectedMessageChannel);updateUnreadIndicators();void acknowledgeViewedMessages()}if(b.dataset.tab==="status")requestAnimationFrame(drawAirtime);if(b.dataset.tab==="map")scheduleMap();if(b.dataset.tab==="settings"){refreshSettingsOptions();void Promise.all([loadDualBootStatus(),loadPingBotStatus()])}}));
 $("refresh").addEventListener("click",()=>void Promise.all([loadArchive(),loadStatus(),loadNotificationStatus()]));
 $("mark-read").addEventListener("click",()=>void acknowledgeViewedMessages());
 $("node-search").addEventListener("input",renderNodes);
@@ -577,9 +636,11 @@ $("settings-json").addEventListener("input",()=>{settingsEditing=true;$("setting
 $("settings-reload").addEventListener("click",()=>{settingsEditing=false;loadSelectedSettings()});
 $("settings-export").addEventListener("click",exportSettings);
 $("settings-apply").addEventListener("click",()=>void applySettings());
+$("pingbot-toggle").addEventListener("click",()=>void togglePingBot());
 $("boot-rnode").addEventListener("click",()=>void bootRNode());
 $("boot-portable").addEventListener("click",()=>void bootPortable());
 $("boot-home").addEventListener("click",()=>void bootHome());
+$("settings-boot-home").addEventListener("click",()=>void bootHome());
 $("upload-rnode").addEventListener("click",()=>void uploadRNodeFirmware());
 
 const composer=$("send-form");
@@ -589,5 +650,5 @@ reserveComposerSpace();
 addEventListener("resize",()=>{drawAirtime();scheduleMap()});
 
 renderAir();drawAirtime();renderMap();
-void Promise.all([loadNodeCache(),loadArchive(),loadStatus(),loadDualBootStatus(),loadNotificationStatus(),loadOwnLocation(),connect()]);
+void Promise.all([loadNodeCache(),loadArchive(),loadStatus(),loadDualBootStatus(),loadNotificationStatus(),loadPingBotStatus(),loadOwnLocation(),connect()]);
 setInterval(loadArchive,30000);setInterval(loadStatus,30000);setInterval(loadNotificationStatus,30000);
