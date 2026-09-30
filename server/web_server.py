@@ -683,6 +683,24 @@ class SPAHandler(SimpleHTTPRequestHandler):
             return
 
         response_body = response.read()
+        if self.command == "GET" and urlsplit(self.path).path == "/nightbot.sent.jsonl" and response.status == 200:
+            progress = self._read_json_file(PING_PROGRESS_PATH, {})
+            sent_pings = progress.get("sentPings", []) if isinstance(progress, dict) else []
+            scheduled_rows = []
+            if isinstance(sent_pings, list):
+                for item in sent_pings:
+                    if not isinstance(item, dict):
+                        continue
+                    sent_at = int(item.get("sentAt", 0) or 0)
+                    if sent_at <= 0:
+                        continue
+                    scheduled_rows.append(json.dumps({
+                        "ts": sent_at, "event": "tx", "from": "self", "to": "^all",
+                        "channel": int(item.get("channel", 3) or 3), "text": "Ping",
+                        "id": int(item.get("packetId", 0) or 0), "automatic": True,
+                    }, ensure_ascii=False, separators=(",", ":")))
+            if scheduled_rows:
+                response_body = response_body.rstrip(b"\n") + b"\n" + ("\n".join(scheduled_rows) + "\n").encode()
         self.send_response(response.status)
         for name in ("Content-Type",):
             value = response.headers.get(name)

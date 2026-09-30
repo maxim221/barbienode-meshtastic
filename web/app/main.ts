@@ -687,7 +687,7 @@ async function loadArchive() {
         try {
           const row=JSON.parse(line);
           if(row && typeof row.ts==="number" && typeof row.text==="string") {
-            result.push({...row,channel:Number(row.channel)||0,source:path.includes("sent")?"исходящие ESP":"архив ESP"});
+            result.push({...row,channel:Number(row.channel)||0,source:row.automatic?"автоматический Ping":path.includes("sent")?"исходящие ESP":"архив ESP"});
             if(typeof row.from==="string" && row.from.startsWith("!")){const num=Number.parseInt(row.from.slice(1),16),known=nodes.get(num)||{};addNode(num,{lastHeard:Math.max(known.lastHeard||0,row.ts),lastRssi:known.lastRssi??row.rssi,lastSnr:known.lastSnr??row.snr,signalAt:known.signalAt??row.ts})}
           }
         } catch {}

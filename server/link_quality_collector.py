@@ -193,7 +193,7 @@ def process_ping_schedule(interface: TCPInterface) -> None:
         sent_pings = progress.get("sentPings", [])
         if not isinstance(sent_pings, list):
             sent_pings = []
-        sent_pings.append({"sentAt": sent_at, "packetId": packet_id})
+        sent_pings.append({"sentAt": sent_at, "packetId": packet_id, "channel": channel_index})
         progress.update({"sent": sent, "lastSentAt": sent_at, "lastPacketId": packet_id, "nextAt": sent_at + interval, "sentPings": sent_pings[-24:]})
         progress.pop("error", None)
         if sent >= count:
