@@ -22,7 +22,11 @@
 #define SX126X_TXEN 7
 
 #define SX126X_DIO3_TCXO_VOLTAGE 1.8
-#define SX126X_MAX_POWER 11
+// EBYTE E22-900M22S rated maximum. The saved LoRa txPower setting may select
+// any lower value; the radio driver still enforces the SX1262/module ceiling.
+#define SX126X_MAX_POWER 22
+// The build environment defines BARBIENODE_ALLOW_REGION_POWER_OVERRIDE so it
+// is visible to every translation unit, including the regional power resolver.
 
 // On-board addressable RGB LED used for the autonomous unread-message heartbeat.
 #define NOTIFICATION_NEOPIXEL_PIN 48

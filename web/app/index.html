@@ -14,8 +14,10 @@
     </header>
     <nav>
       <button class="tab active" data-tab="messages">Сообщения <span id="messages-unread" class="unread-dot" aria-label="Есть новые сообщения" hidden></span></button>
+      <button class="tab" data-tab="mqtt">MQTT <span id="mqtt-unread" class="unread-dot" aria-label="Есть новые MQTT-сообщения" hidden></span></button>
       <button class="tab" data-tab="nodes">Ноды <span id="node-count"></span></button>
       <button class="tab" data-tab="map">Карта <span id="map-count"></span></button>
+      <button class="tab" data-tab="aim">Наведение</button>
       <button class="tab" data-tab="air">Эфир <span id="air-count"></span></button>
       <button class="tab" data-tab="status">Состояние</button>
       <button class="tab" data-tab="settings">Настройки</button>
@@ -73,8 +75,46 @@
         </form>
       </section>
 
+      <section id="mqtt" class="view">
+        <article class="card mqtt-status-card">
+          <div class="mqtt-status-head"><div><strong>Отдельный MQTT-чат</strong><span class="muted">Работает через интернет и не передаёт сообщения в LoRa</span></div><span id="mqtt-state" class="pill warn">выключен</span></div>
+          <details id="mqtt-settings">
+            <summary><span>Настройки MQTT</span><small id="mqtt-settings-summary">Москва · ONEmesh</small></summary>
+            <div class="mqtt-config-grid">
+              <label class="mqtt-wide">Профиль
+                <select id="mqtt-profile">
+                  <option value="onemesh-monitor">Москва · ONEmesh · без downlink</option>
+                  <option value="onemesh-zero">Москва · ONEmesh · zero-hop downlink</option>
+                  <option value="onemesh-full">Москва · ONEmesh · полный downlink</option>
+                  <option value="meshtastic-public">Официальный публичный Meshtastic</option>
+                  <option value="manual">Вручную</option>
+                </select>
+                <small id="mqtt-profile-note" class="muted"></small>
+              </label>
+              <label>Брокер <input id="mqtt-host" type="text" placeholder="mqtt.example.org" autocomplete="off" /></label>
+              <label>Порт <input id="mqtt-port" type="number" min="1" max="65535" value="8883" /></label>
+              <label class="mqtt-wide">Тема чата <input id="mqtt-topic" type="text" value="msh/RU/MSK/2/json/MediumFast" placeholder="msh/RU/MSK/2/json/MediumFast" autocomplete="off" /></label>
+              <label>Имя пользователя <input id="mqtt-username" type="text" autocomplete="username" /></label>
+              <label>Пароль <input id="mqtt-password" type="password" autocomplete="current-password" placeholder="оставьте пустым, чтобы не менять" /></label>
+              <label class="mqtt-check"><input id="mqtt-tls" type="checkbox" checked /> TLS</label>
+            </div>
+            <div class="mqtt-actions"><button id="mqtt-save" type="button" class="secondary">Сохранить</button><button id="mqtt-connect" type="button">Сохранить и подключить</button><button id="mqtt-disconnect" type="button" class="secondary" disabled>Отключить</button><button id="mqtt-refresh" type="button" class="secondary">Обновить</button></div>
+            <p id="mqtt-config-result" class="muted">Подключение выполняется только после нажатия кнопки. Пароль хранится локально на Orange Pi и не возвращается в браузер.</p>
+          </details>
+        </article>
+        <div id="mqtt-message-list" class="cards mqtt-message-list"><p class="muted">MQTT выключен. Принятых сообщений пока нет.</p></div>
+        <form id="mqtt-send-form" class="mqtt-send-form">
+          <textarea id="mqtt-message" maxlength="500" rows="2" placeholder="Сообщение только через MQTT…" required></textarea>
+          <div class="send-row"><span id="mqtt-chars">0/500</span><button id="mqtt-send" type="submit" disabled>Отправить через MQTT</button></div>
+          <p id="mqtt-send-result" class="send-feedback muted"></p>
+        </form>
+      </section>
+
       <section id="nodes" class="view">
-        <input id="node-search" type="search" placeholder="Имя, E1CD, !b3b9e1cd или номер" />
+        <div class="node-controls">
+          <input id="node-search" type="search" placeholder="Имя, E1CD, !b3b9e1cd или номер" />
+          <label class="node-sort-label"><span>Сортировка</span><select id="node-sort" class="node-sort-select"><option value="last-heard">Последний пакет</option><option value="name">Имя А–Я</option><option value="hops">Переходы: 0 → 1 → 2</option><option value="rssi">Сильнее RSSI</option><option value="snr">Выше SNR</option><option value="distance">Ближе к нам</option></select></label>
+        </div>
         <div id="node-list" class="cards"></div>
       </section>
 
@@ -90,6 +130,109 @@
         <p class="muted">Локальная карта центрируется на «МЫ» и показывает расстояния в километрах. Дальние ноды не сжимают карту: используйте −/+ для изменения радиуса. Координаты базовой точки не передаются по LoRa.</p>
       </section>
 
+      <section id="aim" class="view">
+        <section class="aim-control-grid">
+          <article class="card aim-own-location">
+            <strong>Наша точка для расчёта направлений</strong>
+            <div class="aim-location-fields"><label>Широта <input id="aim-own-lat" type="number" min="-90" max="90" step="0.000001" /></label><label>Долгота <input id="aim-own-lon" type="number" min="-180" max="180" step="0.000001" /></label><button id="aim-own-location-save" type="button" class="secondary">Сохранить</button></div>
+            <p id="aim-own-location-state" class="muted">Координаты хранятся только на Orange Pi и не публикуются по LoRa или MQTT.</p>
+          </article>
+          <article class="card aim-autoping">
+            <strong>Автоматический Ping</strong>
+            <div class="aim-autoping-fields"><label>Интервал, мин <input id="aim-autoping-interval" type="number" min="15" max="1440" value="60" /></label><label>Количество <input id="aim-autoping-count" type="number" min="1" max="24" value="7" /></label><button id="aim-autoping-start" type="button">Запустить</button><button id="aim-autoping-cancel" type="button" class="secondary" disabled>Остановить</button></div>
+            <p id="aim-autoping-state" class="muted">Не запущен. Первый Ping отправляется сразу, остальные — только в точный канал Ping с заданным интервалом.</p>
+          </article>
+        </section>
+        <section class="card aim-ping-replies" aria-labelledby="aim-ping-replies-title">
+          <div class="aim-monitor-head"><div><strong id="aim-ping-replies-title">Ответы на наши Ping</strong><span id="aim-ping-replies-summary" class="muted">Ищу ответы в локальном LoRa‑архиве…</span></div></div>
+          <div id="aim-ping-replies-list" class="aim-ping-replies-list" aria-live="polite"><p class="muted">Данных пока нет.</p></div>
+          <p class="muted aim-monitor-note">Ответ связывается с нашим последним Ping по полному ID, последним четырём цифрам ID, имени BarbieNode 💅 или короткому имени db8c. Окно ожидания — 10 минут.</p>
+        </section>
+        <div class="toolbar aim-tools">
+          <label>Целевая нода <select id="aim-target"><option value="">Выберите ноду</option></select></label>
+          <label>Сортировка целей <select id="aim-target-sort" class="node-sort-select"><option value="last-heard">Последний пакет</option><option value="name">Имя А–Я</option><option value="hops">Переходы: 0 → 1 → 2</option><option value="rssi">Сильнее RSSI</option><option value="snr">Выше SNR</option><option value="distance">Ближе к нам</option></select></label>
+          <button id="aim-compass" type="button" class="secondary">Включить компас телефона</button>
+          <button id="aim-refresh" type="button" class="secondary">Обновить показания</button>
+          <button id="aim-reset" type="button" class="secondary">Сбросить лучший сигнал</button>
+        </div>
+        <div class="aim-layout">
+          <article class="card aim-compass-card">
+            <div id="aim-dial" class="aim-dial" aria-label="Направление антенны и азимут на цель">
+              <span class="aim-north">С</span><span class="aim-east">В</span><span class="aim-south">Ю</span><span class="aim-west">З</span>
+              <span id="aim-target-needle" class="aim-needle target" hidden></span>
+              <span id="aim-heading-needle" class="aim-needle heading"></span>
+              <span class="aim-center"></span>
+            </div>
+            <div class="aim-readout"><strong id="aim-heading-value">0°</strong><span>направление антенны</span></div>
+            <label class="aim-manual">Ручное направление <input id="aim-heading" type="range" min="0" max="359" value="0" /><output id="aim-heading-output">0°</output></label>
+            <p id="aim-compass-state" class="muted">Совместите телефон с осью антенны или задайте угол вручную.</p>
+          </article>
+          <article class="card aim-signal-card">
+            <div class="aim-target-summary"><div><span class="muted">Азимут на цель</span><strong id="aim-bearing">—</strong></div><div><span class="muted">Повернуть</span><strong id="aim-turn">—</strong></div><div><span class="muted">Расстояние</span><strong id="aim-distance">—</strong></div></div>
+            <div class="aim-rssi"><span class="muted">Последний прямой приём</span><strong id="aim-rssi">—</strong><span id="aim-snr" class="signal">SNR —</span></div>
+            <div class="aim-signal-track"><span id="aim-signal-fill"></span></div>
+            <div class="aim-target-summary"><div><span class="muted">Лучший RSSI</span><strong id="aim-best">—</strong></div><div><span class="muted">Получен</span><strong id="aim-age">—</strong></div><div><span class="muted">Переходы</span><strong id="aim-hops">—</strong></div></div>
+            <canvas id="aim-chart" aria-label="История прямого RSSI выбранной ноды"></canvas>
+          <p id="aim-status" class="muted">Выберите целевую ноду.</p>
+          <p id="aim-refresh-state" class="muted aim-refresh-state">Автоматическое обновление включено.</p>
+          </article>
+        </div>
+        <div class="signal-help">
+          <p><strong>Пассивный режим:</strong> экран ничего не передаёт и обновляется только когда плата принимает пакет.</p>
+          <p>Для наведения учитываются только прямые LoRa‑пакеты выбранной ноды (0 переходов). Ретрансляции и MQTT исключены: их RSSI относится не к целевой ноде. Чем RSSI ближе к 0 и чем выше SNR, тем лучше.</p>
+        </div>
+        <section class="card aim-monitor" aria-labelledby="aim-monitor-title">
+          <div class="aim-monitor-head">
+            <div><strong id="aim-monitor-title">Сравнение направлений</strong><span id="aim-monitor-scope" class="muted">Выберите целевую ноду для точного сравнения.</span></div>
+            <button id="aim-monitor-reset" type="button" class="secondary">Сбросить сравнение</button>
+          </div>
+          <p id="aim-direction-state" class="aim-direction-state">Пакеты автоматически относятся к текущему азимуту компаса или ручного ползунка.</p>
+          <div class="aim-window-grid">
+            <article class="aim-window fast"><span>Быстрый поиск · 60 секунд</span><strong id="aim-fast-rssi">Ждём пакет</strong><b id="aim-fast-snr">SNR —</b><small id="aim-fast-detail">0 прямых пакетов</small><div class="aim-signal-track"><i id="aim-fast-fill"></i></div></article>
+            <article class="aim-window long"><span>Длительный мониторинг · 30 минут</span><strong id="aim-long-rssi">Нет данных</strong><b id="aim-long-snr">SNR —</b><small id="aim-long-detail">0 прямых пакетов</small><div class="aim-signal-track"><i id="aim-long-fill"></i></div></article>
+          </div>
+          <div class="aim-comparison" aria-live="polite">
+            <div class="aim-comparison-row heading"><span>Измеренный азимут</span><span>Медиана RSSI</span><span>Медиана SNR</span><span>Лучший / пакеты</span></div>
+            <div id="aim-comparison-body"><p class="muted aim-comparison-empty">Поверните антенну и дождитесь прямых пакетов.</p></div>
+          </div>
+          <p class="muted aim-monitor-note">Замеры автоматически группируются по секторам 10° и сохраняются на Orange Pi. Для честного сравнения держите одну и ту же целевую ноду и дайте каждому направлению набрать несколько пакетов.</p>
+        </section>
+        <section class="card aim-trials" aria-labelledby="aim-trials-title">
+          <div class="aim-monitor-head">
+            <div><strong id="aim-trials-title">Контрольные замеры приёма и Ping</strong><span class="muted">Одинаковая длительность для каждого положения антенны</span></div>
+            <div class="aim-trial-actions"><button id="aim-trial-start" type="button">Начать замер</button><button id="aim-trial-stop" type="button" class="secondary" disabled>Завершить</button><button id="aim-trial-ping" type="button" class="secondary" disabled>Один Ping</button></div>
+          </div>
+          <p id="aim-trial-state" class="aim-direction-state">Запустите замер после установки антенны и азимута.</p>
+          <div class="aim-trial-table" aria-live="polite"><div class="aim-trial-row heading"><span>Направление</span><span>Время</span><span>Приём</span><span>Сигнал</span><span>Передача</span></div><div id="aim-trial-body"><p class="muted aim-comparison-empty">Контрольных замеров пока нет.</p></div></div>
+          <p class="muted aim-monitor-note">Считаются только новые внешние LoRa‑пакеты после запуска; MQTT и собственная нода исключены. RSSI ретранслированного пакета относится к последнему участку маршрута. Кнопка Ping передаёт один точный Ping в канале Ping и блокируется до следующего замера; ответ распознаётся по полному ID, имени BarbieNode 💅 или короткому имени db8c.</p>
+        </section>
+        <details class="card aim-guide">
+          <summary>Как правильно наводить направленную антенну</summary>
+          <ol>
+            <li>Не отключая питание, убедитесь, что подходящая антенна и фидер уже надёжно подключены. Не переставляйте антенный разъём на работающей плате.</li>
+            <li>Выберите ноду из списка прямого приёма ниже. Для расчётного азимута у нашей и целевой ноды должны быть известны координаты.</li>
+            <li>Совместите верх телефона с направлением антенны и включите компас. Если компас недоступен, задайте фактический азимут ползунком.</li>
+            <li>Для сравнения направлений поверните антенну и задайте её фактический азимут компасом или ручным ползунком. Новые прямые пакеты автоматически попадут в соответствующий сектор.</li>
+            <li>Для точной доводки поворачивайте антенну небольшими шагами по 5–10° и следите за быстрым индикатором. Экран сам пакеты не запрашивает.</li>
+            <li>Сравнивайте RSSI и SNR нескольких пакетов: RSSI ближе к 0 сильнее, SNR выше — чище. После грубого поиска нажмите «Сбросить лучший сигнал» и уточните максимум.</li>
+          </ol>
+          <p class="muted">Отражения от зданий могут дать более сильное направление, чем расчётный азимут. Фиксируйте антенну по устойчивому максимуму нескольких прямых пакетов, а не по одному всплеску.</p>
+        </details>
+        <section class="card aim-direct-section" aria-labelledby="aim-direct-title">
+          <div class="aim-direct-head">
+            <div><strong id="aim-direct-title">Активные ноды прямого приёма</strong><span id="aim-direct-caption" class="muted">Ищу пакеты с 0 переходов…</span></div>
+            <div class="node-list-actions"><select id="aim-direct-sort" class="node-sort-select" aria-label="Сортировка прямых нод"><option value="last-heard">Последний пакет</option><option value="name">Имя А–Я</option><option value="hops">Переходы: 0 → 1 → 2</option><option value="rssi">Сильнее RSSI</option><option value="snr">Выше SNR</option><option value="distance">Ближе к нам</option></select><button id="aim-direct-refresh" type="button" class="secondary">Обновить список</button></div>
+          </div>
+          <div id="aim-direct-list" class="aim-direct-list" aria-live="polite"><p class="muted">Прямых LoRa‑пакетов за последние 2 часа пока нет.</p></div>
+          <p class="muted aim-direct-note">Обновление только перечитывает локальный журнал и кэш нод Orange Pi; оно ничего не передаёт в LoRa. Нажмите на ноду, чтобы выбрать её целью.</p>
+        </section>
+        <section class="card aim-node-directions" aria-labelledby="aim-node-directions-title">
+          <div class="aim-direct-head"><div><strong id="aim-node-directions-title">Направления до нод</strong><span id="aim-node-directions-caption" class="muted">Нужны координаты нашей точки и нод</span></div><div class="node-list-actions"><input id="aim-node-direction-search" type="search" placeholder="Найти ноду" /><select id="aim-directions-sort" class="node-sort-select" aria-label="Сортировка направлений"><option value="hops">Переходы: 0 → 1 → 2</option><option value="last-heard">Последний пакет</option><option value="name">Имя А–Я</option><option value="rssi">Сильнее RSSI</option><option value="snr">Выше SNR</option><option value="distance">Ближе к нам</option></select></div></div>
+          <div id="aim-node-directions-list" class="aim-direct-list" aria-live="polite"><p class="muted">Загрузка координат…</p></div>
+          <p class="muted aim-direct-note">Азимут и расстояние рассчитаны геометрически по последней известной позиции. Они не подтверждают радиосвязь; «повернуть» считается от текущего положения антенны.</p>
+        </section>
+      </section>
+
       <section id="air" class="view">
         <div class="toolbar air-tools">
           <input id="air-search" type="search" placeholder="Тип пакета, нода или ID" />
@@ -97,12 +240,24 @@
           <button id="clear-air" class="secondary">Очистить</button>
         </div>
         <div id="air-summary" class="status-grid"></div>
+        <details class="card air-contact-card" aria-labelledby="air-contact-title">
+          <summary class="air-contact-head"><div><strong id="air-contact-title">Обращения к нашей ноде</strong><span class="muted">Входящие LoRa-пакеты с признаками запроса или прямой адресации</span></div><span id="air-contact-count" class="badge">0</span></summary>
+          <div id="air-contact-list" class="air-contact-list" aria-live="polite"><p class="muted">Таких пакетов пока нет.</p></div>
+          <p class="muted air-contact-note">Это признак возможной попытки связаться, а не доказательство успешного диалога. MQTT и собственные передачи исключены.</p>
+        </details>
         <div id="air-list" class="cards"></div>
       </section>
 
       <section id="status" class="view">
+        <div class="toolbar status-toolbar"><span id="status-updated" class="muted">Обновление…</span><button id="status-refresh" type="button" class="secondary">Обновить</button></div>
+        <article class="card modem-preset-card">
+          <div><span class="muted">Профиль LoRa</span><strong id="modem-preset-current">получаю с платы…</strong><small id="modem-preset-detail">Регион, слот, мощность, роль и каналы сохраняются.</small></div>
+          <div class="modem-preset-actions"><button id="preset-medium-fast" type="button" class="secondary" disabled>MediumFast</button><button id="preset-long-fast" type="button" class="secondary" disabled>LongFast</button></div>
+          <p id="modem-preset-result" class="muted"></p>
+        </article>
         <div id="status-grid" class="status-grid" aria-live="polite"><p class="muted">Загрузка…</p></div>
         <div class="chart-card"><strong>Загрузка эфира за текущую сессию</strong><canvas id="air-chart"></canvas><div class="legend"><span>■ канал занят</span><span>■ передача нашей ноды</span></div></div>
+        <div class="chart-card"><strong>Качество приёма за 24 часа</strong><canvas id="link-quality-chart" aria-label="Медианные RSSI и SNR входящих LoRa-пакетов за сутки"></canvas><div class="legend"><span class="legend-rssi">■ RSSI последнего RF‑участка</span><span class="legend-snr">■ SNR</span><span class="legend-direct">● прямой RSSI · 0 переходов</span></div><p id="link-quality-caption" class="muted">Загрузка суточной истории…</p></div>
         <details><summary>Что работает без интернета?</summary><p>Эта страница, журнал и обмен с платой работают внутри вашей Wi‑Fi сети. Сами сообщения уходят и приходят по LoRa. Интернет нужен только для внешних карт.</p></details>
       </section>
 
@@ -118,6 +273,20 @@
           <p>Отвечает только на точный текст «Ping» в канале Ping. Ограничения частоты ответов сохраняются.</p>
           <div class="actions"><span id="pingbot-state" class="pill">Проверяю…</span><button id="pingbot-toggle" type="button" class="secondary" disabled>Изменить</button></div>
           <p id="pingbot-result" class="muted"></p>
+        </article>
+        <article class="card settings-channels">
+          <strong>Каналы</strong>
+          <p>Доступно восемь слотов. Вторичные каналы используют тот же LoRa‑эфир, что и основной; имя само по себе не даёт доступа без правильного ключа.</p>
+          <div id="channel-manager" class="channel-manager" aria-live="polite"><p class="muted">Загрузка каналов…</p></div>
+          <p id="channel-manager-result" class="muted"></p>
+          <details class="channel-manual">
+            <summary>Краткая инструкция и значения параметров</summary>
+            <h3>Как создать приватный канал</h3>
+            <ol><li>Выберите свободный слот и нажмите «Добавить канал».</li><li>Задайте короткое имя и нажмите «Новый ключ 256 бит».</li><li>Нажмите «Копировать новый ключ» и безопасно передайте имя и ключ только участникам канала. После сохранения ключ снова будет скрыт.</li><li>Оставьте MQTT uplink/downlink выключенными, если интернет‑шлюз не нужен, затем нажмите «Сохранить».</li><li>На остальных нодах добавьте вторичный канал с тем же именем и точным Base64‑ключом. Один и тот же номер слота не обязателен.</li></ol>
+            <h3>Что означают поля</h3>
+            <dl><dt>Слот 0–7</dt><dd>Локальное место канала в устройстве. Все слоты используют общий LoRa‑профиль и одну частоту.</dd><dt>Основной</dt><dd>Определяет радиопрофиль устройства. Редактор не позволяет удалить его.</dd><dt>Вторичный</dt><dd>Дополнительный поток сообщений со своим именем и ключом, но на той же частоте.</dd><dt>Имя</dt><dd>До 11 байт UTF‑8. Имя не является паролем и не открывает канал без PSK.</dd><dt>Ключ PSK</dt><dd>Секрет в Base64: 1, 16 или 32 байта. Для нового приватного канала рекомендуется случайный ключ 32 байта. Пустое поле сохраняет текущий ключ.</dd><dt>Точность позиции</dt><dd><code>0</code> — не публиковать позицию в этот канал; <code>32</code> — точные координаты; <code>19</code> — примерно 50 м; чем меньше число, тем грубее область.</dd><dt>Приглушить</dt><dd>Оставляет канал настроенным, но скрывает его обычные уведомления на клиенте.</dd><dt>AEAD</dt><dd>Аутентифицированное шифрование. Включайте только если все участники используют совместимую прошивку.</dd><dt>MQTT uplink</dt><dd>Разрешает отправку сообщений этого канала в MQTT, если общий модуль MQTT будет включён.</dd><dt>MQTT downlink</dt><dd>Разрешает перенос сообщений из MQTT в LoRa. Может расходовать эфир; без необходимости не включайте.</dd><dt>Отключить канал</dt><dd>Освобождает вторичный слот на этой ноде. У других участников канал не удаляется.</dd></dl>
+            <p class="muted">Перед каждым сохранением или отключением интерфейс автоматически скачивает резервную копию с секретами. Храните её локально и не публикуйте.</p>
+          </details>
         </article>
         <article class="card settings-warning">
           <strong>Расширенный ручной редактор</strong>

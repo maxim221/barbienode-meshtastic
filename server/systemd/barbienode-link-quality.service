@@ -1,0 +1,26 @@
+[Unit]
+Description=BarbieNode passive LoRa link-quality collector
+After=network-online.target meshtastic-web.service
+Wants=network-online.target meshtastic-web.service
+
+[Service]
+Type=simple
+User=netwatch-admin
+Group=netwatch-admin
+ExecStart=/opt/barbienode-ping/venv/bin/python /opt/barbienode-link-quality/collector.py
+Environment=MESHTASTIC_HOST=192.168.1.31
+Environment=LINK_QUALITY_PATH=/var/lib/barbienode-link-quality/events.jsonl
+Environment=PING_SCHEDULE_URL=http://127.0.0.1:8082/ping-schedule.json
+StateDirectory=barbienode-link-quality
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

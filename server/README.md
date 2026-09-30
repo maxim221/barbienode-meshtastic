@@ -1,9 +1,13 @@
 # Сервисы Orange Pi
 
-Оба приложения используют только стандартную библиотеку Python.
+Серверные компоненты используют общее виртуальное окружение с Python-клиентом
+Meshtastic; MQTT-чат дополнительно использует `paho-mqtt`.
 
-- `web_server.py` — статический SPA-сервер, allowlist reverse proxy к плате и
-  локальное API снимка NodeDB (`GET/POST /node-cache.json`).
+- `web_server.py` — статический SPA-сервер, allowlist reverse proxy к плате,
+  локальные API NodeDB, наведения, расписания Ping и отдельного MQTT-чата.
+- `link_quality_collector.py` — пассивный суточный журнал качества RF, исполнитель
+  автоматических Ping и локальный TCP-шлюз ручной отправки. Шлюз слушает только
+  `127.0.0.1:8765`; браузер обращается к нему через `/lora-send.json` веб-сервера.
 - `nightbot_archive.py` — сбор JSONL в SQLite и локальная страница экспорта.
 - `systemd/` — sandboxed unit-файлы с общей конфигурацией
   `/etc/barbienode/barbienode.env`.
@@ -11,9 +15,15 @@
 Проверка без установки:
 
 ```bash
-python3 -m py_compile web_server.py nightbot_archive.py
+python3 -m py_compile web_server.py link_quality_collector.py nightbot_archive.py
 ```
 
 Unit веб-сервера использует `StateDirectory=barbienode-web`, поэтому снимок
 NodeDB переживает перезапуск службы и обновление статических файлов. Размер
 принимаемого JSON ограничен 4 MiB, число нод — 2000; запись выполняется атомарно.
+
+Ручные сообщения, Ping, запрос позиции и трассировка проходят через постоянное
+TCP-соединение коллектора. Это исключает ложный успех браузерного HTTP-транспорта,
+когда packet ID был создан локально, но пакет не попадал в радиоочередь. Точный
+текст `Ping` шлюз разрешает только широковещательно в активном канале с точным
+именем `Ping`.

@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL(".", import.meta.url));
+const assetVersion = Date.now().toString(36);
 
 export default defineConfig({
   root,
@@ -12,8 +13,8 @@ export default defineConfig({
       order: "post",
       handler(html) {
         return html
-          .replace('src="/app.js"', 'src="/app.js?v=20260927-packets-pingbot-15"')
-          .replace('href="/style.css"', 'href="/style.css?v=20260927-packets-pingbot-15"');
+          .replace('src="/app.js"', `src="/app.js?v=${assetVersion}"`)
+          .replace('href="/style.css"', `href="/style.css?v=${assetVersion}"`);
       },
     },
   }],

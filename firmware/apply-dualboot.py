@@ -22,12 +22,18 @@ source = root / "src"
 handler = source / "mesh/http/ContentHandler.cpp"
 wifi_client = source / "mesh/wifi/WiFiAPClient.cpp"
 radio_interface = source / "mesh/RadioLibInterface.cpp"
+radio_base = source / "mesh/RadioInterface.cpp"
+mqtt = source / "mqtt/MQTT.cpp"
 if not handler.is_file():
     raise SystemExit(f"Meshtastic ContentHandler.cpp not found under {root}")
 if not wifi_client.is_file():
     raise SystemExit(f"Meshtastic WiFiAPClient.cpp not found under {root}")
 if not radio_interface.is_file():
     raise SystemExit(f"Meshtastic RadioLibInterface.cpp not found under {root}")
+if not radio_base.is_file():
+    raise SystemExit(f"Meshtastic RadioInterface.cpp not found under {root}")
+if not mqtt.is_file():
+    raise SystemExit(f"Meshtastic MQTT.cpp not found under {root}")
 
 bundle = Path(__file__).resolve().parent
 overlay = bundle / "overlay"
@@ -279,4 +285,31 @@ radio_text = replace_once(
     '#endif',
 )
 radio_interface.write_text(radio_text)
+
+radio_base_text = radio_base.read_text()
+radio_base_text = replace_once(
+    radio_base_text,
+    '    RDEF(RU, 868.7f, 869.2f, 100, 20, false, false, PROFILE_STD, PRESET(LONG_FAST), 0),',
+    '#if defined(BARBIENODE_ALLOW_REGION_POWER_OVERRIDE)\n'
+    '    RDEF(RU, 868.7f, 869.2f, 100, 22, false, false, PROFILE_STD, PRESET(LONG_FAST), 0),\n'
+    '#else\n'
+    '    RDEF(RU, 868.7f, 869.2f, 100, 20, false, false, PROFILE_STD, PRESET(LONG_FAST), 0),\n'
+    '#endif',
+)
+radio_base.write_text(radio_base_text)
+
+mqtt_text = mqtt.read_text()
+mqtt_text = replace_once(
+    mqtt_text,
+    "    if (map_position_precision < 12 || map_position_precision > 15) {",
+    "#if defined(E22_S3_N16R8)\n"
+    "    // Precision 16 puts the intentionally displaced public marker inside\n"
+    "    // Goncharovsky Park. Upstream caps public map reports at 15 bits; this\n"
+    "    // target-specific exception does not affect ordinary LoRa positions.\n"
+    "    if (map_position_precision < 12 || map_position_precision > 16) {\n"
+    "#else\n"
+    "    if (map_position_precision < 12 || map_position_precision > 15) {\n"
+    "#endif",
+)
+mqtt.write_text(mqtt_text)
 print(f"Dual-boot handlers and autonomous bots installed in {root}")
