@@ -476,11 +476,21 @@ function renderAimPingReplies(){
     if(!group.replies.length)replies.append(Object.assign(document.createElement("span"),{className:"muted",textContent:now<=group.ping.ts+600?"Ожидаем ответы…":"Явных ответов не найдено."}));
     for(const [num,message] of group.replies){const row=document.createElement("button");row.type="button";row.className="secondary aim-ping-reply-node";row.textContent=`${nodeName(num)} · ${new Date(message.ts*1000).toLocaleTimeString("ru-RU")} · +${message.ts-group.ping.ts} с`;row.addEventListener("click",()=>openNode(num));replies.append(row)}article.append(head,replies);list.append(article)}
 }
+function syncScheduledPingMessages(){
+  messages=messages.filter(message=>message.source!=="автоматический Ping");
+  const pingChannel=[...channels.entries()].find(([,channel])=>String(channel.settings?.name||"").trim().toLowerCase()==="ping")?.[0]??3;
+  for(const ping of scheduledPings){
+    const alreadyShown=messages.some(message=>message.event==="tx"&&message.text.trim().toLowerCase()==="ping"&&((ping.id&&message.id===ping.id)||Math.abs(message.ts-ping.ts)<=2));
+    if(!alreadyShown)messages.push({ts:ping.ts,event:"tx",from:myNode?hex(myNode):"self",to:"^all",channel:pingChannel,text:"Ping",id:ping.id,source:"автоматический Ping"});
+  }
+  messages=messages.slice().sort((a,b)=>a.ts-b.ts).slice(-MAX_BROWSER_MESSAGES);
+  renderMessageChannelTabs();renderMessages();
+}
 function renderPingSchedule(data:AnyRecord){
   const config=data?.config||{},progress=data?.progress||{},running=Boolean(config.enabled)&&!progress.completedAt&&!progress.error;$<HTMLButtonElement>("aim-autoping-start").disabled=running;$<HTMLButtonElement>("aim-autoping-cancel").disabled=!running;
-  const sentPings=Array.isArray(progress.sentPings)?progress.sentPings:[];scheduledPings=sentPings.map((item:AnyRecord)=>({ts:Number(item.sentAt),id:Number(item.packetId)||undefined})).filter((item:{ts:number})=>Number.isFinite(item.ts)&&item.ts>0);if(!scheduledPings.length&&Number(progress.lastSentAt)>0)scheduledPings=[{ts:Number(progress.lastSentAt),id:Number(progress.lastPacketId)||undefined}];renderAimPingReplies();
+  const sentPings=Array.isArray(progress.sentPings)?progress.sentPings:[];scheduledPings=sentPings.map((item:AnyRecord)=>({ts:Number(item.sentAt),id:Number(item.packetId)||undefined})).filter((item:{ts:number})=>Number.isFinite(item.ts)&&item.ts>0);if(!scheduledPings.length&&Number(progress.lastSentAt)>0)scheduledPings=[{ts:Number(progress.lastSentAt),id:Number(progress.lastPacketId)||undefined}];syncScheduledPingMessages();renderAimPingReplies();
   if(config.intervalMinutes)$<HTMLInputElement>("aim-autoping-interval").value=String(config.intervalMinutes);if(config.count)$<HTMLInputElement>("aim-autoping-count").value=String(config.count);
-  if(running){const sent=Number(progress.sent)||0,next=Number(progress.nextAt)||Number(config.createdAt)||0;$("aim-autoping-state").textContent=`Выполняется: отправлено ${sent} из ${config.count}; направление ${Number(config.heading).toFixed(0)}°. ${next?`Следующий ${new Date(next*1000).toLocaleString("ru-RU")}.`:"Ожидаю отправку."}`}
+  if(running){const sent=Number(progress.sent)||0,next=Number(progress.nextAt)||Number(config.createdAt)||0,last=Number(progress.lastSentAt)||0,packetId=Number(progress.lastPacketId)||0;$("aim-autoping-state").textContent=`Выполняется: отправлено ${sent} из ${config.count}; направление ${Number(config.heading).toFixed(0)}°. ${last?`Последний ${new Date(last*1000).toLocaleString("ru-RU")}${packetId?` · пакет #${packetId}`:""}. `:""}${next?`Следующий ${new Date(next*1000).toLocaleString("ru-RU")}.`:"Ожидаю отправку."}`}
   else if(progress.error)$("aim-autoping-state").textContent=`Остановлен из-за ошибки: ${progress.error}`;
   else if(progress.completedAt)$("aim-autoping-state").textContent=`Завершён: отправлено ${progress.sent||0} из ${config.count||0}.`;
   else if(config.cancelledAt)$("aim-autoping-state").textContent=`Остановлен: отправлено ${progress.sent||0} из ${config.count||0}.`;
