@@ -1,0 +1,10 @@
+# Must match firmware/tripleboot_16MB.csv.
+# Name,     Type, SubType, Offset,    Size,     Flags
+nvs,        data, nvs,     0x9000,    0x5000,
+otadata,    data, ota,     0xe000,    0x2000,
+app0,       app,  ota_0,   0x10000,   0x340000,
+app2,       app,  ota_2,   0x350000,  0x300000,
+app1,       app,  ota_1,   0x650000,  0x300000,
+meshcorefs, data, spiffs,  0x950000,  0x340000,
+spiffs,     data, spiffs,  0xc90000,  0x360000,
+coredump,   data, coredump,0xff0000,  0x10000,

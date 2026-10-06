@@ -1,0 +1,30 @@
+[Unit]
+Description=BarbieNode local Reticulum and LXMF bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch-admin
+Group=netwatch-admin
+Environment=PYTHONUNBUFFERED=1
+Environment=RETICULUM_CONFIG_DIR=/var/lib/barbienode-reticulum/reticulum
+Environment=RETICULUM_STATE_DIR=/var/lib/barbienode-reticulum
+Environment=RETICULUM_BRIDGE_HOST=127.0.0.1
+Environment=RETICULUM_BRIDGE_PORT=8767
+ExecStart=/opt/barbienode-reticulum/venv/bin/python /opt/barbienode-reticulum/reticulum_bridge.py
+Restart=on-failure
+RestartSec=10
+StateDirectory=barbienode-reticulum
+StateDirectoryMode=0700
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

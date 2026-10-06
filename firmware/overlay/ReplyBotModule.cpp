@@ -27,8 +27,8 @@ constexpr uint16_t STATE_VERSION = 1;
 constexpr uint32_t NIGHT_START_EPOCH = 1790280000; // 2026-09-24 23:00 MSK
 constexpr uint32_t NIGHT_END_EPOCH = 1790312400;   // 2026-09-25 08:00 MSK
 constexpr uint32_t BEACON_INTERVAL_SECONDS = 60 * 60;
-// Deliberately off in the public source. Enabling periodic RF transmissions
-// requires an explicit local decision and coordination with the radio community.
+// Deliberately off in the published and reproducible source. Enabling a
+// periodic public RF transmission requires a separate explicit decision.
 constexpr bool ENABLE_SCHEDULED_BEACON = false;
 constexpr uint32_t THREAD_INTERVAL_MS = 5000;
 constexpr uint32_t HEARTBEAT_PULSE_MS = 250;
@@ -41,10 +41,13 @@ constexpr size_t MAX_LOG_BYTES = 256 * 1024;
 constexpr const char *STATE_PATH = "/nightbot.state";
 constexpr const char *LOG_PATH = "/static/nightbot.jsonl";
 constexpr const char *OLD_LOG_PATH = "/static/nightbot.previous.jsonl";
+constexpr const char *SENT_LOG_PATH = "/static/nightbot.sent.jsonl";
+constexpr uint32_t VALID_ARCHIVE_TIME_FLOOR = 946684800; // 2000-01-01
+constexpr uint32_t ARCHIVE_FUTURE_TOLERANCE = 5 * 60;
 constexpr const char *BEACON_TEXT = "Привет! Спишь?";
 constexpr const char *AWAY_TEXT = "Сейчас я не у компьютера. Постараюсь связаться с вами, когда вернусь";
 constexpr const char *PING_CHANNEL_NAME = "Ping";
-constexpr const char *PING_LOCATION = "local node";
+constexpr const char *PING_LOCATION = "Бутырский";
 constexpr uint32_t PING_GLOBAL_COOLDOWN_MS = 30 * 1000;
 constexpr uint32_t PING_SENDER_COOLDOWN_MS = 5 * 60 * 1000;
 constexpr uint8_t PING_COOLDOWN_SLOTS = 16;
@@ -183,6 +186,157 @@ void writeJsonString(File &file, const uint8_t *value, size_t length)
     }
     file.write('"');
 }
+
+bool archiveTimestamp(const String &line, uint32_t &value, int &start, int &end)
+{
+    start = line.indexOf("\"ts\":");
+    if (start < 0)
+        return false;
+    start += 5;
+    end = start;
+    while (end < static_cast<int>(line.length()) && isdigit(static_cast<unsigned char>(line[end])))
+        ++end;
+    if (end == start)
+        return false;
+    value = strtoul(line.substring(start, end).c_str(), nullptr, 10);
+    return true;
+}
+
+bool copyArchiveFile(const char *sourcePath, const char *backupPath)
+{
+    if (FSCom.exists(backupPath))
+        return true;
+    File source = FSCom.open(sourcePath, FILE_O_READ);
+    File backup = FSCom.open(backupPath, FILE_O_WRITE);
+    if (!source || !backup) {
+        if (source)
+            source.close();
+        if (backup)
+            backup.close();
+        return false;
+    }
+    uint8_t buffer[512];
+    while (source.available()) {
+        const size_t count = source.read(buffer, sizeof(buffer));
+        if (count == 0 || backup.write(buffer, count) != count) {
+            source.close();
+            backup.close();
+            FSCom.remove(backupPath);
+            return false;
+        }
+    }
+    source.close();
+    backup.flush();
+    backup.close();
+    return true;
+}
+
+uint32_t normalizeArchiveFile(const char *path, const char *temporaryPath, const char *backupPath, uint32_t exactEpoch)
+{
+    if (!FSCom.exists(path))
+        return 0;
+
+    File scan = FSCom.open(path, FILE_O_READ);
+    if (!scan)
+        return 0;
+    uint32_t previousAnchor = 0, nextAnchor = 0, firstFuture = 0, lastFuture = 0;
+    uint32_t futureCount = 0, lastValid = 0;
+    bool blockEnded = false, multipleBlocks = false, nonCanonicalLineEnding = false;
+    while (scan.available()) {
+        String line = scan.readStringUntil('\n');
+        nonCanonicalLineEnding = nonCanonicalLineEnding || line.endsWith("\r\r");
+        uint32_t timestamp = 0;
+        int start = 0, end = 0;
+        if (!archiveTimestamp(line, timestamp, start, end))
+            continue;
+        const bool future = timestamp > exactEpoch + ARCHIVE_FUTURE_TOLERANCE;
+        if (future) {
+            if (blockEnded) {
+                multipleBlocks = true;
+                break;
+            }
+            if (futureCount == 0) {
+                previousAnchor = lastValid;
+                firstFuture = timestamp;
+            }
+            lastFuture = timestamp;
+            ++futureCount;
+        } else if (timestamp >= VALID_ARCHIVE_TIME_FLOOR) {
+            if (futureCount != 0 && nextAnchor == 0) {
+                nextAnchor = timestamp;
+                blockEnded = true;
+            }
+            lastValid = timestamp;
+        }
+    }
+    scan.close();
+    if ((futureCount == 0 && !nonCanonicalLineEnding) || multipleBlocks)
+        return 0;
+
+    uint32_t rangeStart = 0, rangeEnd = 0;
+    if (futureCount != 0) {
+        rangeStart = previousAnchor ? previousAnchor + 1 : 0;
+        rangeEnd = nextAnchor && nextAnchor > rangeStart + 1 ? nextAnchor - 1 : exactEpoch;
+        if (rangeStart == 0) {
+            const uint32_t observedSpan = lastFuture >= firstFuture ? lastFuture - firstFuture : 0;
+            rangeStart = rangeEnd > observedSpan ? rangeEnd - observedSpan : VALID_ARCHIVE_TIME_FLOOR;
+        }
+        if (rangeEnd <= rangeStart)
+            return 0;
+    }
+
+    if (!copyArchiveFile(path, backupPath))
+        return 0;
+    FSCom.remove(temporaryPath);
+    File input = FSCom.open(path, FILE_O_READ);
+    File output = FSCom.open(temporaryPath, FILE_O_WRITE);
+    if (!input || !output) {
+        if (input)
+            input.close();
+        if (output)
+            output.close();
+        FSCom.remove(temporaryPath);
+        return 0;
+    }
+
+    uint32_t corrected = 0;
+    const uint64_t sourceSpan = lastFuture > firstFuture ? static_cast<uint64_t>(lastFuture - firstFuture) : 0;
+    const uint64_t targetSpan = static_cast<uint64_t>(rangeEnd - rangeStart);
+    while (input.available()) {
+        String line = input.readStringUntil('\n');
+        while (line.endsWith("\r"))
+            line.remove(line.length() - 1);
+        uint32_t timestamp = 0;
+        int start = 0, end = 0;
+        if (archiveTimestamp(line, timestamp, start, end) && timestamp > exactEpoch + ARCHIVE_FUTURE_TOLERANCE) {
+            uint32_t normalized;
+            if (sourceSpan == 0) {
+                normalized = rangeStart + (targetSpan * corrected) / (futureCount > 1 ? futureCount - 1 : 1);
+            } else {
+                normalized = rangeStart + (targetSpan * static_cast<uint64_t>(timestamp - firstFuture)) / sourceSpan;
+            }
+            line = line.substring(0, start) + String(normalized) + line.substring(end);
+            ++corrected;
+        }
+        output.println(line);
+    }
+    input.close();
+    output.flush();
+    output.close();
+    if (corrected != futureCount) {
+        FSCom.remove(temporaryPath);
+        return 0;
+    }
+    FSCom.remove(path);
+    if (!FSCom.rename(temporaryPath, path)) {
+        // Keep the immutable pre-sync backup even if replacing the live file
+        // fails, and restore a copy of it for normal archive reads.
+        copyArchiveFile(backupPath, path);
+        FSCom.remove(temporaryPath);
+        return 0;
+    }
+    return corrected;
+}
 } // namespace
 
 uint16_t getNotificationUnreadState() { return notificationUnread.load(); }
@@ -242,6 +396,22 @@ void notifyNotificationTransmit()
 }
 
 void notifyNotificationReceive() { notificationReceiveCount.fetch_add(1); }
+
+uint32_t normalizeNightbotArchiveTimestamps(uint32_t exactEpoch)
+{
+#ifdef FSCom
+    concurrency::LockGuard guard(spiLock);
+    uint32_t corrected = 0;
+    corrected += normalizeArchiveFile(LOG_PATH, "/static/nightbot.clock.tmp", "/static/nightbot.before-clock-sync.jsonl", exactEpoch);
+    corrected += normalizeArchiveFile(OLD_LOG_PATH, "/static/nightbot.previous.clock.tmp",
+                                      "/static/nightbot.previous.before-clock-sync.jsonl", exactEpoch);
+    corrected += normalizeArchiveFile(SENT_LOG_PATH, "/static/nightbot.sent.clock.tmp",
+                                      "/static/nightbot.sent.before-clock-sync.jsonl", exactEpoch);
+    return corrected;
+#else
+    return 0;
+#endif
+}
 
 ReplyBotModule::ReplyBotModule()
     : SinglePortModule("nightbot", meshtastic_PortNum_TEXT_MESSAGE_APP), concurrency::OSThread("NightBot", THREAD_INTERVAL_MS)
@@ -374,6 +544,10 @@ bool ReplyBotModule::sendText(uint32_t dest, uint8_t channel, const char *text, 
     packet->to = dest;
     packet->channel = channel;
     packet->want_ack = wantAck;
+    // Human-authored text uses HIGH priority in Meshtastic. Keep automatic
+    // replies explicitly in BACKGROUND so they cannot jump ahead of a message
+    // submitted by the user while the channel is busy.
+    packet->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
     packet->decoded.want_response = false;
     packet->decoded.dest = dest;
     packet->decoded.payload.size = strnlen(text, sizeof(packet->decoded.payload.bytes));

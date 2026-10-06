@@ -9,12 +9,13 @@
   </head>
   <body>
     <header>
-      <div><strong>BarbieNode</strong><small>локальный Meshtastic</small></div>
+      <div><strong>BarbieNode</strong><small id="runtime-label">определяю режим…</small></div>
       <span id="connection" class="pill warn">подключение…</span>
     </header>
     <nav>
-      <button class="tab active" data-tab="messages">Сообщения <span id="messages-unread" class="unread-dot" aria-label="Есть новые сообщения" hidden></span></button>
-      <button class="tab" data-tab="mqtt">MQTT <span id="mqtt-unread" class="unread-dot" aria-label="Есть новые MQTT-сообщения" hidden></span></button>
+      <button class="tab active" data-tab="messages" data-message-stream="all">Сообщения <span id="messages-unread" class="unread-dot" aria-label="Есть новые сообщения в каналах" hidden></span></button>
+      <button class="tab" data-tab="messages" data-message-stream="direct">Личные <span id="direct-messages-unread" class="unread-dot" aria-label="Есть новые личные сообщения" hidden></span></button>
+      <button class="tab" data-tab="mqtt" data-requires-backend hidden>MQTT <span id="mqtt-unread" class="unread-dot" aria-label="Есть новые MQTT-сообщения" hidden></span></button>
       <button class="tab" data-tab="nodes">Ноды <span id="node-count"></span></button>
       <button class="tab" data-tab="map">Карта <span id="map-count"></span></button>
       <button class="tab" data-tab="aim">Наведение</button>
@@ -27,8 +28,17 @@
     <main>
       <section id="messages" class="view active">
         <div id="message-channels" class="channel-tabs" role="tablist" aria-label="Потоки сообщений"></div>
+        <div id="message-directs" class="direct-tabs" role="tablist" aria-label="Личные диалоги" hidden></div>
+        <label id="direct-recipient-picker" class="direct-recipient-picker" hidden>Новый личный диалог
+          <select id="direct-recipient"><option value="">Выберите ноду…</option></select>
+        </label>
+        <section id="direct-conversation" class="direct-conversation" hidden>
+          <div><span class="identity-label">Личный диалог</span><strong id="direct-conversation-name">Получатель не выбран</strong><small id="direct-conversation-id"></small></div>
+          <p id="direct-conversation-security" class="muted"></p>
+          <button id="direct-conversation-close" type="button" class="secondary">Закрыть диалог</button>
+        </section>
         <div class="toolbar message-toolbar">
-          <label>Отправить в <select id="channel"><option value="0">0 · Первичный</option></select></label>
+          <label id="channel-picker">Отправить в <select id="channel"><option value="0">0 · Первичный</option></select></label>
           <span id="message-filter-label" class="muted">Показаны все каналы</span>
           <span id="notification-state" class="notification-state muted">LED: проверка…</span>
           <button id="mark-read" type="button" class="secondary">Прочитано</button>
@@ -51,6 +61,7 @@
           <textarea id="message" maxlength="200" rows="2" placeholder="Введите сообщение…" required></textarea>
           <div id="send-guidance" class="send-guidance" hidden></div>
           <div id="emoji-bar" class="emoji-bar" aria-label="Популярные эмодзи">
+            <a class="meshpic-button" href="https://meshpic.org/" target="_blank" rel="noopener noreferrer" aria-label="Открыть MeshPic в новой вкладке" title="Загрузить изображение через Интернет и скопировать короткую ссылку">🖼 Фото</a>
             <button type="button" class="emoji-button" data-emoji="👍" aria-label="Добавить 👍">👍</button>
             <button type="button" class="emoji-button" data-emoji="❤️" aria-label="Добавить ❤️">❤️</button>
             <button type="button" class="emoji-button" data-emoji="😂" aria-label="Добавить 😂">😂</button>
@@ -75,9 +86,9 @@
         </form>
       </section>
 
-      <section id="mqtt" class="view">
+      <section id="mqtt" class="view" data-requires-backend hidden>
         <article class="card mqtt-status-card">
-          <div class="mqtt-status-head"><div><strong>Отдельный MQTT-чат</strong><span class="muted">Работает через интернет и не передаёт сообщения в LoRa</span></div><span id="mqtt-state" class="pill warn">выключен</span></div>
+          <div class="mqtt-status-head"><div><strong>OneMesh и MQTT</strong><span class="muted">Публичный чат карты загружается через Orange Pi и не передаётся в LoRa</span></div><span id="mqtt-state" class="pill warn">загрузка…</span></div>
           <details id="mqtt-settings">
             <summary><span>Настройки MQTT</span><small id="mqtt-settings-summary">Москва · ONEmesh</small></summary>
             <div class="mqtt-config-grid">
@@ -135,9 +146,9 @@
           <article class="card aim-own-location">
             <strong>Наша точка для расчёта направлений</strong>
             <div class="aim-location-fields"><label>Широта <input id="aim-own-lat" type="number" min="-90" max="90" step="0.000001" /></label><label>Долгота <input id="aim-own-lon" type="number" min="-180" max="180" step="0.000001" /></label><button id="aim-own-location-save" type="button" class="secondary">Сохранить</button></div>
-            <p id="aim-own-location-state" class="muted">Координаты хранятся только на Orange Pi и не публикуются по LoRa или MQTT.</p>
+            <p id="aim-own-location-state" class="muted">Координаты хранятся локально и не публикуются по LoRa или MQTT.</p>
           </article>
-          <article class="card aim-autoping">
+          <article class="card aim-autoping" data-requires-backend hidden>
             <strong>Автоматический Ping</strong>
             <div class="aim-autoping-fields"><label>Интервал, мин <input id="aim-autoping-interval" type="number" min="15" max="1440" value="60" /></label><label>Количество <input id="aim-autoping-count" type="number" min="1" max="24" value="7" /></label><button id="aim-autoping-start" type="button">Запустить</button><button id="aim-autoping-cancel" type="button" class="secondary" disabled>Остановить</button></div>
             <p id="aim-autoping-state" class="muted">Не запущен. Первый Ping отправляется сразу, остальные — только в точный канал Ping с заданным интервалом.</p>
@@ -195,7 +206,7 @@
             <div class="aim-comparison-row heading"><span>Измеренный азимут</span><span>Медиана RSSI</span><span>Медиана SNR</span><span>Лучший / пакеты</span></div>
             <div id="aim-comparison-body"><p class="muted aim-comparison-empty">Поверните антенну и дождитесь прямых пакетов.</p></div>
           </div>
-          <p class="muted aim-monitor-note">Замеры автоматически группируются по секторам 10° и сохраняются на Orange Pi. Для честного сравнения держите одну и ту же целевую ноду и дайте каждому направлению набрать несколько пакетов.</p>
+          <p id="aim-monitor-storage-note" class="muted aim-monitor-note">Замеры автоматически группируются по секторам 10° и сохраняются локально. Для честного сравнения держите одну и ту же целевую ноду и дайте каждому направлению набрать несколько пакетов.</p>
         </section>
         <section class="card aim-trials" aria-labelledby="aim-trials-title">
           <div class="aim-monitor-head">
@@ -224,7 +235,7 @@
             <div class="node-list-actions"><select id="aim-direct-sort" class="node-sort-select" aria-label="Сортировка прямых нод"><option value="last-heard">Последний пакет</option><option value="name">Имя А–Я</option><option value="hops">Переходы: 0 → 1 → 2</option><option value="rssi">Сильнее RSSI</option><option value="snr">Выше SNR</option><option value="distance">Ближе к нам</option></select><button id="aim-direct-refresh" type="button" class="secondary">Обновить список</button></div>
           </div>
           <div id="aim-direct-list" class="aim-direct-list" aria-live="polite"><p class="muted">Прямых LoRa‑пакетов за последние 2 часа пока нет.</p></div>
-          <p class="muted aim-direct-note">Обновление только перечитывает локальный журнал и кэш нод Orange Pi; оно ничего не передаёт в LoRa. Нажмите на ноду, чтобы выбрать её целью.</p>
+          <p id="aim-direct-storage-note" class="muted aim-direct-note">Обновление только перечитывает локальный журнал и кэш нод; оно ничего не передаёт в LoRa. Нажмите на ноду, чтобы выбрать её целью.</p>
         </section>
         <section class="card aim-node-directions" aria-labelledby="aim-node-directions-title">
           <div class="aim-direct-head"><div><strong id="aim-node-directions-title">Направления до нод</strong><span id="aim-node-directions-caption" class="muted">Нужны координаты нашей точки и нод</span></div><div class="node-list-actions"><input id="aim-node-direction-search" type="search" placeholder="Найти ноду" /><select id="aim-directions-sort" class="node-sort-select" aria-label="Сортировка направлений"><option value="hops">Переходы: 0 → 1 → 2</option><option value="last-heard">Последний пакет</option><option value="name">Имя А–Я</option><option value="rssi">Сильнее RSSI</option><option value="snr">Выше SNR</option><option value="distance">Ближе к нам</option></select></div></div>
@@ -250,15 +261,26 @@
 
       <section id="status" class="view">
         <div class="toolbar status-toolbar"><span id="status-updated" class="muted">Обновление…</span><button id="status-refresh" type="button" class="secondary">Обновить</button></div>
-        <article class="card modem-preset-card">
+        <article class="card modem-preset-card" data-requires-backend hidden>
           <div><span class="muted">Профиль LoRa</span><strong id="modem-preset-current">получаю с платы…</strong><small id="modem-preset-detail">Регион, слот, мощность, роль и каналы сохраняются.</small></div>
           <div class="modem-preset-actions"><button id="preset-medium-fast" type="button" class="secondary" disabled>MediumFast</button><button id="preset-long-fast" type="button" class="secondary" disabled>LongFast</button></div>
           <p id="modem-preset-result" class="muted"></p>
         </article>
+        <article class="card lbt-card" aria-labelledby="lbt-title">
+          <div>
+            <strong id="lbt-title">Listen Before Talk (LBT)</strong>
+            <p>Перед передачей плата проверяет канал через CAD и откладывает пакет, если эфир занят. Безопасный режим — включён.</p>
+          </div>
+          <label class="lbt-switch">
+            <input id="lbt-toggle" type="checkbox" role="switch" disabled>
+            <span id="lbt-state" class="pill">Проверяю…</span>
+          </label>
+          <p id="lbt-result" class="muted">Переключение сохраняется на плате и само по себе ничего не передаёт в LoRa.</p>
+        </article>
         <div id="status-grid" class="status-grid" aria-live="polite"><p class="muted">Загрузка…</p></div>
         <div class="chart-card"><strong>Загрузка эфира за текущую сессию</strong><canvas id="air-chart"></canvas><div class="legend"><span>■ канал занят</span><span>■ передача нашей ноды</span></div></div>
-        <div class="chart-card"><strong>Качество приёма за 24 часа</strong><canvas id="link-quality-chart" aria-label="Медианные RSSI и SNR входящих LoRa-пакетов за сутки"></canvas><div class="legend"><span class="legend-rssi">■ RSSI последнего RF‑участка</span><span class="legend-snr">■ SNR</span><span class="legend-direct">● прямой RSSI · 0 переходов</span></div><p id="link-quality-caption" class="muted">Загрузка суточной истории…</p></div>
-        <details><summary>Что работает без интернета?</summary><p>Эта страница, журнал и обмен с платой работают внутри вашей Wi‑Fi сети. Сами сообщения уходят и приходят по LoRa. Интернет нужен только для внешних карт.</p></details>
+        <div class="chart-card" data-requires-backend hidden><strong>Качество приёма за 24 часа</strong><canvas id="link-quality-chart" aria-label="Медианные RSSI и SNR входящих LoRa-пакетов за сутки"></canvas><div class="legend"><span class="legend-rssi">■ RSSI последнего RF‑участка</span><span class="legend-snr">■ SNR</span><span class="legend-direct">● прямой RSSI · 0 переходов</span></div><p id="link-quality-caption" class="muted">Загрузка суточной истории…</p></div>
+        <details><summary>Что работает без домашней сети и интернета?</summary><p>Подключите телефон к точке доступа BarbieNode-Portable и откройте страницу платы. Сообщения, ноды, локальная карта, наведение, эфир, состояние, настройки, режимы и журнал платы работают напрямую. MQTT/OneMesh, домашняя суточная история и автоматический планировщик Ping скрываются, потому что им нужен Orange Pi или Интернет.</p></details>
       </section>
 
       <section id="settings" class="view">
@@ -273,6 +295,32 @@
           <p>Отвечает только на точный текст «Ping» в канале Ping. Ограничения частоты ответов сохраняются.</p>
           <div class="actions"><span id="pingbot-state" class="pill">Проверяю…</span><button id="pingbot-toggle" type="button" class="secondary" disabled>Изменить</button></div>
           <p id="pingbot-result" class="muted"></p>
+        </article>
+        <article class="card settings-mobility" aria-labelledby="mobility-title">
+          <strong id="mobility-title">Стационарный и мобильный режим</strong>
+          <p>Роль меняется только вручную. <code>CLIENT</code> подходит стационарной ноде, <code>CLIENT_MUTE</code> — мобильной и не ретранслирует чужие пакеты.</p>
+          <div class="mobility-role-row">
+            <span id="node-role-state" class="pill">Получаю роль…</span>
+            <button id="role-client" type="button" class="secondary" disabled>CLIENT · дома</button>
+            <button id="role-client-mute" type="button" class="secondary" disabled>CLIENT_MUTE · в поездке</button>
+          </div>
+          <p id="node-role-result" class="muted">Перед сменой роли будет автоматически скачана резервная копия конфигурации.</p>
+          <hr>
+          <strong>Позиция телефона</strong>
+          <p>GPS не включается в фоне. Кнопка только заполняет поля; отдельное подтверждение передаёт одну позицию плате. Если сейчас сохранена фиксированная позиция, интерфейс сначала отключит её и сохранит точку для ручного возврата.</p>
+          <div class="phone-position-grid">
+            <label>Широта<input id="phone-position-lat" type="number" inputmode="decimal" min="-90" max="90" step="0.0000001" placeholder="55.0000000"></label>
+            <label>Долгота<input id="phone-position-lon" type="number" inputmode="decimal" min="-180" max="180" step="0.0000001" placeholder="37.0000000"></label>
+            <label>Высота, м<input id="phone-position-alt" type="number" inputmode="decimal" step="1" placeholder="необязательно"></label>
+          </div>
+          <div class="actions">
+            <span id="position-mode-state" class="pill">Получаю режим…</span>
+            <button id="phone-position-read" type="button" class="secondary">Получить GPS телефона</button>
+            <button id="phone-position-send" type="button" disabled>Передать один раз</button>
+            <button id="fixed-position-restore" type="button" class="secondary" hidden>Вернуть сохранённую фиксированную точку</button>
+          </div>
+          <p id="phone-position-result" class="muted">Точные координаты не будут получены или переданы без нажатия кнопки.</p>
+          <p class="muted">Передача позиции расходует эфир. Точность, видимая другим нодам, дополнительно ограничивается настройкой позиции каждого канала. Принятие пакета платой не подтверждает его получение другими нодами.</p>
         </article>
         <article class="card settings-channels">
           <strong>Каналы</strong>
@@ -308,8 +356,8 @@
       <section id="mode" class="view">
         <article class="card mode-card">
           <h2>Режим устройства</h2>
-          <p>Доступны Meshtastic через домашний Wi‑Fi, портативный Meshtastic AP для прямого подключения телефона и RNode для Reticulum. Одновременно работает только один режим.</p>
-          <div id="dualboot-status" class="result muted">Проверяю раздел RNode…</div>
+          <p>Доступны Meshtastic через домашний Wi‑Fi, портативный Meshtastic AP, RNode для Reticulum и MeshCore Companion по BLE. Одновременно работает только один режим.</p>
+          <div id="dualboot-status" class="result muted">Проверяю разделы RNode и MeshCore…</div>
           <div id="portable-controls">
             <label for="portable-password">Пароль портативной точки</label>
             <input id="portable-password" type="password" minlength="8" maxlength="63" autocomplete="new-password" placeholder="8–63 латинских символа или цифры" />
@@ -317,8 +365,9 @@
           </div>
           <button id="boot-home" type="button" class="secondary" hidden>Вернуться в домашнюю Wi‑Fi сеть</button>
           <button id="boot-rnode" type="button" class="danger" disabled>Перейти в RNode / Reticulum</button>
+          <button id="boot-meshcore" type="button" class="danger" disabled>Перейти в MeshCore / LoRa</button>
           <p id="dualboot-result" class="muted"></p>
-          <small>Портативная точка работает по адресу 192.168.4.1 и не изменяет сохранённые параметры домашней сети. После перехода в RNode плата подключится к домашнему Wi‑Fi; при неудаче за 90 секунд она автоматически вернётся в Meshtastic. Аварийный возврат из RNode — удерживать BOOT при включении.</small>
+          <small>MeshCore — отдельная LoRa-сеть, несовместимая с Meshtastic. iPhone управляет MeshCore по BLE через MeshCore Companion. После переключения нода остаётся в домашнем Wi‑Fi: этот же адрес открывает страницу «Вернуться в Meshtastic». Резервная команда возврата по BLE — <code>meshtastic</code>.</small>
           <hr />
           <h2>Обновление RNode по Wi‑Fi</h2>
           <p>Выберите application image RNode для BarbieNode. Он записывается только в неактивный раздел <code>app1</code>; Meshtastic останется рабочим при ошибке или обрыве.</p>
@@ -326,6 +375,13 @@
           <button id="upload-rnode" type="button" class="secondary">Проверить и загрузить в app1</button>
           <p id="firmware-result" class="muted"></p>
           <small>Браузер и плата независимо проверяют SHA‑256 и внутреннюю метку RNode dual‑boot. Загрузка не переключает режим автоматически.</small>
+          <hr />
+          <h2>Установка MeshCore по Wi‑Fi</h2>
+          <p>Выберите только application image MeshCore Companion BLE для BarbieNode. Он записывается в отдельный раздел <code>app2</code>, не затрагивая Meshtastic, RNode, NVS и LittleFS.</p>
+          <input id="meshcore-firmware" type="file" accept=".bin,application/octet-stream" />
+          <button id="upload-meshcore" type="button" class="secondary">Проверить и загрузить в app2</button>
+          <p id="meshcore-firmware-result" class="muted"></p>
+          <small>Принимается только образ с внутренней меткой BarbieNode MeshCore triple‑boot. Стандартный merged image использовать нельзя.</small>
         </article>
       </section>
     </main>

@@ -1,0 +1,2 @@
+# Keep the reviewed companion protocol implementation reproducible.
+meshcore==2.3.14

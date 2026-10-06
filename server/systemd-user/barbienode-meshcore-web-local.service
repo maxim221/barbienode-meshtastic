@@ -1,0 +1,23 @@
+[Unit]
+Description=BarbieNode local MeshCore web messenger
+After=barbienode-meshcore-local.service
+Wants=barbienode-meshcore-local.service
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=WEB_ROOT=/mnt/3def02a4-d6db-43f4-8782-139cd6c6b91d/Yandex.Disk/draftCode/LoRa/barbienode-meshtastic/web/dist
+Environment=BIND_HOST=127.0.0.1
+Environment=PORT=8083
+Environment=DEVICE_URL=http://192.168.1.31
+Environment=MESHCORE_BRIDGE_URL=http://127.0.0.1:18766
+ExecStart=/usr/bin/python3 /mnt/3def02a4-d6db-43f4-8782-139cd6c6b91d/Yandex.Disk/draftCode/LoRa/barbienode-meshtastic/server/web_server.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=default.target

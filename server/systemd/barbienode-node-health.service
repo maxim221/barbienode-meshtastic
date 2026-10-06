@@ -1,0 +1,29 @@
+[Unit]
+Description=Passive BarbieNode power and availability monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch-admin
+Group=netwatch-admin
+ExecStart=/usr/bin/python3 /opt/barbienode-node-health/monitor.py
+Environment=NODE_REPORT_URL=http://192.168.1.31/json/report
+Environment=NODE_MODE_STATUS_URL=http://192.168.1.31/status
+Environment=NODE_HEALTH_PATH=/var/lib/barbienode-node-health/health.jsonl
+Environment=NODE_HEALTH_POLL_SECONDS=60
+Environment=NODE_HEALTH_SAMPLE_SECONDS=300
+Environment=NODE_HEALTH_HTTP_TIMEOUT_SECONDS=10
+StateDirectory=barbienode-node-health
+Restart=on-failure
+RestartSec=30
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

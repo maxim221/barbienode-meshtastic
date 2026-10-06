@@ -1,0 +1,26 @@
+[Unit]
+Description=BarbieNode MeshChatX LXMF server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=netwatch-admin
+Group=netwatch-admin
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/barbienode-meshchatx/venv/bin/meshchatx --headless --auth --disable-plugins --host 192.168.1.19 --port 9337 --identity-file /var/lib/barbienode-reticulum/identity --storage-dir /var/lib/barbienode-meshchatx/storage --reticulum-config-dir /var/lib/barbienode-meshchatx/reticulum
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadOnlyPaths=/var/lib/barbienode-reticulum/identity
+ReadWritePaths=/var/lib/barbienode-meshchatx
+
+[Install]
+WantedBy=multi-user.target

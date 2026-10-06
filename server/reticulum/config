@@ -1,0 +1,41 @@
+[reticulum]
+# Keep the repository template passive. The secured runtime deployment changes
+# this to yes together with enabling the authenticated LAN gateway below.
+enable_transport = no
+share_instance = no
+instance_name = barbienode_rnode
+panic_on_interface_error = no
+
+[logging]
+loglevel = 4
+
+[interfaces]
+
+[[BarbieNode RNode WiFi]]
+type = RNodeInterface
+enabled = yes
+port = tcp://192.168.1.31
+frequency = 868825000
+bandwidth = 125000
+txpower = 18
+spreadingfactor = 10
+codingrate = 7
+flow_control = no
+airtime_limit_short = 10
+airtime_limit_long = 10
+outgoing = yes
+
+# Runtime deployment enables this interface only after replacing both
+# placeholders with credentials stored outside the repository.
+[[BarbieNode Home LAN Gateway]]
+type = TCPServerInterface
+enabled = no
+mode = gateway
+listen_ip = 192.168.1.19
+listen_port = 4242
+network_name = CHANGE_ME_OUTSIDE_REPOSITORY
+passphrase = CHANGE_ME_OUTSIDE_REPOSITORY
+
+# Internet TCP hubs are intentionally absent. LAN clients reach the Reticulum
+# mesh through this gateway; the only external interface remains the local
+# RNode, so messages leave the house only over LoRa.

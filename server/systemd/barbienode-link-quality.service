@@ -10,10 +10,13 @@ Group=netwatch-admin
 ExecStart=/opt/barbienode-ping/venv/bin/python /opt/barbienode-link-quality/collector.py
 Environment=MESHTASTIC_HOST=192.168.1.31
 Environment=LINK_QUALITY_PATH=/var/lib/barbienode-link-quality/events.jsonl
+Environment=DELIVERY_STATUS_PATH=/var/lib/barbienode-link-quality/deliveries.jsonl
 Environment=PING_SCHEDULE_URL=http://127.0.0.1:8082/ping-schedule.json
 StateDirectory=barbienode-link-quality
 Restart=always
-RestartSec=10
+RestartSec=15
+RestartSteps=5
+RestartMaxDelaySec=5min
 NoNewPrivileges=yes
 PrivateTmp=yes
 ProtectSystem=strict

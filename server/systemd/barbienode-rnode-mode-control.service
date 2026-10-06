@@ -1,0 +1,22 @@
+[Unit]
+Description=BarbieNode narrow RNode firmware-switch helper
+After=network-online.target
+
+[Service]
+Type=simple
+User=netwatch-admin
+Group=netwatch-admin
+ExecStart=/opt/barbienode-meshchatx/venv/bin/python /opt/barbienode-web/rnode_mode_control.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadOnlyPaths=/var/lib/barbienode-meshchatx
+ReadWritePaths=/var/lib/barbienode-reticulum
+
+[Install]
+WantedBy=multi-user.target

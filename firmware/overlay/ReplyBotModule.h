@@ -16,6 +16,7 @@ bool setPingBotEnabled(bool enabled);
 void clearNotificationUnread(int8_t channel);
 void notifyNotificationTransmit();
 void notifyNotificationReceive();
+uint32_t normalizeNightbotArchiveTimestamps(uint32_t exactEpoch);
 
 class ReplyBotModule : public SinglePortModule, private concurrency::OSThread
 {

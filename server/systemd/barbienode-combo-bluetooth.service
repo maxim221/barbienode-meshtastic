@@ -1,0 +1,18 @@
+[Unit]
+Description=Keep combo USB Bluetooth RF path powered with Wi-Fi networking down
+After=disable-wifi.service bluetooth.service
+Before=barbienode-meshcore.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -ec '/usr/sbin/rfkill unblock wifi; for phy in /sys/class/net/*/phy80211; do [ -e "$$phy" ] || continue; iface=$${phy#/sys/class/net/}; iface=$${iface%/phy80211}; /usr/sbin/ip link set dev "$$iface" down; done'
+ExecStop=/usr/sbin/rfkill block wifi
+RemainAfterExit=yes
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

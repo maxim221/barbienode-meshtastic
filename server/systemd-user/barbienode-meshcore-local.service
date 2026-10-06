@@ -1,0 +1,21 @@
+[Unit]
+Description=BarbieNode MeshCore BLE bridge on the local workstation
+
+[Service]
+Type=simple
+Environment=PYTHONUNBUFFERED=1
+Environment=MESHCORE_BLE_ADDRESS=F0:9E:9E:21:DB:8D
+Environment=MESHCORE_BRIDGE_HOST=127.0.0.1
+Environment=MESHCORE_BRIDGE_PORT=18766
+Environment=MESHCORE_STATE_DIR=%h/.local/state/barbienode-meshcore
+ExecStart=/home/maxim/.local/share/pipx/venvs/meshcore-cli/bin/python /mnt/3def02a4-d6db-43f4-8782-139cd6c6b91d/Yandex.Disk/draftCode/LoRa/barbienode-meshtastic/server/meshcore_bridge.py
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/state/barbienode-meshcore
+
+[Install]
+WantedBy=default.target

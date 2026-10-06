@@ -1,0 +1,23 @@
+[reticulum]
+  enable_transport = No
+  share_instance = No
+  instance_name = barbie_meshchatx
+  panic_on_interface_error = No
+
+[logging]
+  loglevel = 4
+
+[interfaces]
+  [[BarbieNode RNode WiFi]]
+    type = RNodeInterface
+    enabled = Yes
+    port = tcp://192.168.1.31
+    frequency = 868825000
+    bandwidth = 125000
+    txpower = 18
+    spreadingfactor = 10
+    codingrate = 7
+    flow_control = No
+    airtime_limit_short = 10
+    airtime_limit_long = 10
+    outgoing = Yes

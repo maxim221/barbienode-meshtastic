@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import os
 import queue
 import threading
@@ -19,6 +20,7 @@ from pubsub import pub
 
 DEVICE_HOST = os.environ.get("MESHTASTIC_HOST", "192.168.1.31")
 EVENTS_PATH = Path(os.environ.get("LINK_QUALITY_PATH", "/var/lib/barbienode-link-quality/events.jsonl"))
+DELIVERIES_PATH = Path(os.environ.get("DELIVERY_STATUS_PATH", "/var/lib/barbienode-link-quality/deliveries.jsonl"))
 PING_SCHEDULE_PATH = Path(os.environ.get("PING_SCHEDULE_PATH", "/var/lib/barbienode-web/ping-schedule.json"))
 PING_SCHEDULE_URL = os.environ.get("PING_SCHEDULE_URL", "").strip()
 PING_PROGRESS_PATH = Path(os.environ.get("PING_PROGRESS_PATH", "/var/lib/barbienode-link-quality/ping-progress.json"))
@@ -30,6 +32,9 @@ SEND_GATEWAY_HOST = os.environ.get("SEND_GATEWAY_HOST", "127.0.0.1")
 SEND_GATEWAY_PORT = int(os.environ.get("SEND_GATEWAY_PORT", "8765"))
 
 lock = threading.Lock()
+delivery_lock = threading.Lock()
+pending_delivery_lock = threading.Lock()
+pending_destinations: dict[int, str] = {}
 send_queue: queue.Queue[dict] = queue.Queue()
 ready_at = float("inf")
 own_node = 0
@@ -73,6 +78,24 @@ def ping_channel_index(interface: TCPInterface) -> int | None:
 
 
 class LocalSendHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self.path != "/deliveries":
+            self.send_error(404)
+            return
+        try:
+            lines = DELIVERIES_PATH.read_text().splitlines()[-1000:]
+        except (FileNotFoundError, PermissionError, OSError):
+            lines = []
+        rows = []
+        for line in lines:
+            try:
+                row = json.loads(line)
+                if isinstance(row, dict):
+                    rows.append(row)
+            except (ValueError, json.JSONDecodeError):
+                continue
+        self._reply(200, {"ok": True, "events": rows})
+
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
         if self.path != "/send":
             self.send_error(404)
@@ -86,6 +109,7 @@ class LocalSendHandler(BaseHTTPRequestHandler):
             text = str(source.get("text", "")).strip()
             channel = int(source.get("channel"))
             destination = str(source.get("destination", "^all"))
+            public_key_b64 = str(source.get("publicKey", "")).strip()
             if action not in {"text", "position", "trace"}:
                 raise ValueError("invalid LoRa action")
             if action == "text" and (not text or len(text.encode("utf-8")) > 228):
@@ -96,16 +120,21 @@ class LocalSendHandler(BaseHTTPRequestHandler):
                 raise ValueError("invalid destination")
             if action != "text" and destination == "^all":
                 raise ValueError("position and trace requests require a node destination")
+            public_key = b""
+            if public_key_b64:
+                public_key = base64.b64decode(public_key_b64, validate=True)
+                if len(public_key) != 32 or not any(public_key):
+                    raise ValueError("publicKey must contain exactly 32 non-zero bytes")
         except (TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
-            self._reply(400, {"ok": False, "error": str(error)})
+            self._reply(400, {"ok": False, "stage": "validation", "transmitted": False, "error": str(error)})
             return
-        request = {"action": action, "text": text, "channel": channel, "destination": destination, "done": threading.Event()}
+        request = {"action": action, "text": text, "channel": channel, "destination": destination, "publicKey": public_key, "done": threading.Event()}
         send_queue.put(request)
         if not request["done"].wait(20):
             self._reply(504, {"ok": False, "error": "LoRa sender did not respond in time"})
             return
         result = request.get("result", {"ok": False, "error": "unknown send error"})
-        self._reply(200 if result.get("ok") else 503, result)
+        self._reply(200 if result.get("ok") else 409 if result.get("stage") == "preflight" else 503, result)
 
     def _reply(self, status: int, payload: dict) -> None:
         body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode()
@@ -140,17 +169,60 @@ def process_send_queue(interface: TCPInterface) -> None:
             configured_hops = int(getattr(lora_config, "hop_limit", 0) or 0)
             packet = interface.sendData(mesh_pb2.RouteDiscovery(), destinationId=request["destination"], portNum=portnums_pb2.PortNum.TRACEROUTE_APP, wantAck=True, wantResponse=True, channelIndex=channel_index, hopLimit=configured_hops or None)
         else:
-            packet = interface.sendText(
-                request["text"], destinationId=request["destination"],
+            send_options = {}
+            if request["destination"] != "^all":
+                destination_id = request["destination"].lower()
+                public_key = request.get("publicKey", b"")
+                if not public_key:
+                    node = getattr(interface, "nodes", {}).get(destination_id, {})
+                    user = node.get("user", {}) if isinstance(node, dict) else {}
+                    public_key = user.get("publicKey", user.get("public_key", b"")) if isinstance(user, dict) else b""
+                if isinstance(public_key, list):
+                    public_key = bytes(public_key)
+                elif isinstance(public_key, str):
+                    try:
+                        public_key = base64.b64decode(public_key, validate=True)
+                    except ValueError:
+                        public_key = b""
+                if not isinstance(public_key, (bytes, bytearray)) or len(public_key) != 32 or not any(public_key):
+                    request["result"] = {"ok": False, "stage": "preflight", "transmitted": False, "errorCode": 39, "error": "Личная отправка остановлена до эфира: у отправителя нет 32-байтного публичного PKI-ключа получателя."}
+                    return
+                destination = request["destination"]
+                def on_ack_nak(response: dict) -> None:
+                    record_delivery_response(response, destination)
+                send_options = {"pkiEncrypted": True, "publicKey": bytes(public_key), "onResponse": on_ack_nak, "onResponseAckPermitted": True}
+            packet = interface.sendData(
+                request["text"].encode("utf-8"), destinationId=request["destination"],
+                portNum=portnums_pb2.PortNum.TEXT_MESSAGE_APP,
                 wantAck=request["destination"] != "^all", channelIndex=channel_index,
+                **send_options,
             )
         packet_id = int(packet.get("id", 0) if isinstance(packet, dict) else getattr(packet, "id", 0) or 0)
-        request["result"] = {"ok": True, "packetId": packet_id, "action": request["action"], "channel": channel_index, "channelName": channel_name}
+        if request["action"] == "text" and request["destination"] != "^all":
+            with pending_delivery_lock:
+                pending_destinations[packet_id] = request["destination"].lower()
+            append_delivery({"ts": int(time.time()), "packetId": packet_id, "destination": request["destination"], "status": "accepted", "evidence": "Пакет принят локальным отправителем и поставлен в очередь с запросом ACK."})
+        request["result"] = {"ok": True, "packetId": packet_id, "action": request["action"], "channel": channel_index, "channelName": channel_name, "stage": "accepted", "transmitted": None}
     except Exception as error:  # Meshtastic transport errors vary by release.
-        request["result"] = {"ok": False, "error": str(error)}
+        if not request.get("result"):
+            request["result"] = {"ok": False, "stage": "sender", "transmitted": False, "error": str(error)}
     finally:
         request["done"].set()
         send_queue.task_done()
+
+
+def ensure_transport_alive(interface: TCPInterface) -> None:
+    """Let systemd recreate the client after the Meshtastic reader exits.
+
+    TCPInterface's reader thread terminates on a connection reset.  Its
+    heartbeat may then fail to reconnect while the board is still rebooting,
+    leaving the HTTP gateway alive but with nobody able to service send_queue.
+    Raising here makes the process fail closed; Restart=always establishes a
+    fresh interface once the board's TCP API is available again.
+    """
+    reader = getattr(interface, "_rxThread", None)
+    if reader is not None and not reader.is_alive():
+        raise ConnectionError("Meshtastic TCP reader stopped")
 
 
 def process_ping_schedule(interface: TCPInterface) -> None:
@@ -219,9 +291,60 @@ def append_event(row: dict[str, object]) -> None:
         stream.write(json.dumps(row, separators=(",", ":")) + "\n")
 
 
+def append_delivery(row: dict[str, object]) -> None:
+    DELIVERIES_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with delivery_lock, DELIVERIES_PATH.open("a", encoding="utf-8") as stream:
+        stream.write(json.dumps(row, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
+def delivery_from_packet(packet: dict, destination: str = "") -> dict[str, object] | None:
+    decoded = packet.get("decoded", {})
+    if not isinstance(decoded, dict):
+        return None
+    request_id = int(decoded.get("requestId", 0) or 0)
+    routing = decoded.get("routing", {})
+    if not request_id or not isinstance(routing, dict):
+        return None
+    if not destination:
+        with pending_delivery_lock:
+            destination = pending_destinations.get(request_id, "")
+    if not destination:
+        return None
+    destination = destination.lower()
+    source = str(packet.get("fromId", "")).lower()
+    reason = str(routing.get("errorReason", "NONE"))
+    raw = routing.get("raw")
+    code = int(getattr(raw, "error_reason", 0) or 0) if raw is not None else 0
+    delivered = reason == "NONE" or not reason
+    # The Python client also exposes a local/implicit ACK from our own board.
+    # It confirms queue/radio handling, not receipt by the intended peer.
+    if delivered and source != destination:
+        return None
+    with pending_delivery_lock:
+        pending_destinations.pop(request_id, None)
+    return {
+        "ts": int(time.time()), "packetId": request_id,
+        "destination": destination,
+        "status": "delivered" if delivered else "failed",
+        "errorCode": code if not delivered else 0,
+        "errorReason": reason,
+        "from": source,
+        "evidence": "Получен адресный routing ACK от получателя." if delivered else f"Получен routing NAK: {reason}.",
+    }
+
+
+def record_delivery_response(packet: dict, destination: str = "") -> None:
+    row = delivery_from_packet(packet, destination)
+    if row:
+        append_delivery(row)
+
+
 def on_receive(packet: dict, interface: TCPInterface) -> None:
     if time.time() < ready_at:
         return
+    delivery = delivery_from_packet(packet)
+    if delivery:
+        append_delivery(delivery)
     sender = int(packet.get("from", 0) or 0)
     if not sender or sender == own_node or bool(packet.get("viaMqtt", False)):
         return
@@ -239,21 +362,22 @@ def on_receive(packet: dict, interface: TCPInterface) -> None:
 
 def compact() -> None:
     cutoff = int(time.time()) - RETENTION_SECONDS
-    try:
-        with lock:
-            retained = []
-            for line in EVENTS_PATH.read_text().splitlines():
-                try:
-                    row = json.loads(line)
-                    if int(row.get("ts", 0)) >= cutoff:
-                        retained.append(json.dumps(row, separators=(",", ":")))
-                except (TypeError, ValueError, json.JSONDecodeError):
-                    continue
-            temporary = EVENTS_PATH.with_suffix(".tmp")
-            temporary.write_text("\n".join(retained) + ("\n" if retained else ""))
-            os.replace(temporary, EVENTS_PATH)
-    except FileNotFoundError:
-        return
+    for path, path_lock in ((EVENTS_PATH, lock), (DELIVERIES_PATH, delivery_lock)):
+        try:
+            with path_lock:
+                retained = []
+                for line in path.read_text().splitlines():
+                    try:
+                        row = json.loads(line)
+                        if int(row.get("ts", 0)) >= cutoff:
+                            retained.append(json.dumps(row, ensure_ascii=False, separators=(",", ":")))
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        continue
+                temporary = path.with_suffix(".tmp")
+                temporary.write_text("\n".join(retained) + ("\n" if retained else ""))
+                os.replace(temporary, path)
+        except FileNotFoundError:
+            continue
 
 
 def main() -> int:
@@ -270,6 +394,7 @@ def main() -> int:
         next_compaction = time.monotonic() + 3600
         next_schedule_check = 0.0
         while True:
+            ensure_transport_alive(interface)
             process_send_queue(interface)
             if time.monotonic() >= next_schedule_check:
                 process_ping_schedule(interface)

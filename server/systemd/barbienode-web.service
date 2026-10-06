@@ -11,6 +11,7 @@ EnvironmentFile=-/etc/barbienode/barbienode.env
 Environment=WEB_ROOT=/opt/barbienode-web
 Environment=PORT=8082
 Environment=LINK_QUALITY_PATH=/var/lib/barbienode-link-quality/events.jsonl
+Environment=DELIVERY_STATUS_PATH=/var/lib/barbienode-link-quality/deliveries.jsonl
 Environment=DEVICE_URL=http://192.168.1.31
 Environment=NODE_CACHE_PATH=/var/lib/barbienode-web/node-cache.json
 StateDirectory=barbienode-web
